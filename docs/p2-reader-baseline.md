@@ -1,6 +1,6 @@
 # P2 — Reader Baseline 实施记录
 
-状态：**核心闭环已实现；Desktop Chromium 自动验收通过；Firefox / Android / iOS 待验收**
+状态：**核心闭环已实现；Chromium / Firefox 自动验收通过；Android / iOS 真机待验收**
 
 ## 1. 目标
 
@@ -129,32 +129,27 @@ Reader adapter 动态加载。2026-08-12 production build 已确认 Foliate 的 
 - 运行时修改字号 / 行距；
 - 修改排版后 Reader 仍可继续翻页并保存位置。
 
-## 8. Chromium 自动 smoke
+## 8. Chromium / Firefox 自动 smoke
 
-CI 在 production build 后使用系统 Chromium，以移动视口运行真实 EPUB smoke：
+CI 在 production build 后对同一套真实 EPUB 场景运行两个浏览器：
 
 ```text
-Vite production preview
-        ↓
 Chromium 390 × 844
 mobile + touch context
-        ↓
-《【小王子】》
-横式打开 → 翻页 → CFI 保存 → 重开恢复
-        ↓
-《【小王子】》原始直式 EPUB
-独立打开 → 独立位置 key
-        ↓
-《基地系列》
-两个可读 BookPart → 位置隔离
-        ↓
-《老人與海》
-翻页 → 字号 / 行距修改 → 继续翻页
+        │
+        ├──《【小王子】》横式：打开 → 翻页 → CFI 保存 → 重开恢复
+        ├──《【小王子】》原始直式：独立打开 → 独立位置 key
+        ├──《基地系列》：两个可读 BookPart → 位置隔离
+        └──《老人與海》：翻页 → 字号 / 行距修改 → 继续翻页
+
+Firefox 390 × 844
+        │
+        └── 同一套三书真实 EPUB smoke
 ```
 
-测试同时监听浏览器 `pageerror`；任何未捕获 runtime error 都直接使 CI 失败，不允许仅因 UI 看起来还能工作就放行。
+测试监听浏览器 `pageerror`；任何未捕获 runtime error 都直接使 CI 失败，不允许仅因 UI 看起来还能工作就放行。
 
-因此下列能力已经经过真实 Chromium runtime 验证，而不是编译期假设：
+因此下列能力已经经过 Chromium 和 Firefox runtime 验证，而不是编译期假设：
 
 - GitHub Raw EPUB 可由 production Reader 打开；
 - 当前 CSP 不阻断 Foliate 正常渲染；
@@ -164,9 +159,13 @@ mobile + touch context
 - 多 `BookPart` 进度隔离成立；
 - 基础排版运行时修改不会让 Reader 失效。
 
-## 9. foliate-js #150 生命周期兼容补丁
+## 9. foliate-js 生命周期兼容补丁
 
-三样本 smoke 在快速切换《基地系列》卷册时捕获到一个间歇性未捕获异常：
+真实 smoke 捕获了两个同源生命周期竞争。
+
+### 9.1 Chromium / 通用 ResizeObserver 路径
+
+快速切换《基地系列》卷册时曾出现：
 
 ```text
 TypeError: Cannot destructure property 'style' of 'e' as it is null.
@@ -179,15 +178,42 @@ TypeError: Cannot destructure property 'style' of 'e' as it is null.
 
 稳定性复跑确认该错误可重复出现。
 
-随后确认 foliate-js 上游已有开放 issue **#150 — `Paginator's ResizeObserver can render against a detached or bodyless section document`**，其根因和我们的堆栈一致：旧 section iframe 被关闭 / 切换后，已排队的 `ResizeObserver` 仍可能执行，此时 `contentDocument.body` 已不存在。
+foliate-js 上游已有开放 issue **#150 — `Paginator's ResizeObserver can render against a detached or bodyless section document`**，根因和我们的堆栈一致：旧 section iframe 被关闭 / 切换后，已排队的 `ResizeObserver` 仍可能执行，此时 `contentDocument.body` 已不存在。
 
-上游建议在 `Paginator.render()` 入口直接跳过无有效 `document.body` 的渲染：
+当前补丁在 `Paginator.render()` 入口加入：
 
 ```js
 if (!this.#view?.document?.body) return
 ```
 
-当前 `foliate-js@1.0.1` 尚未包含该修复，因此项目增加：
+### 9.2 Firefox `fonts.ready` 路径
+
+接入 Firefox smoke 后又捕获：
+
+```text
+TypeError: this.document is null
+    at View.expand
+    at doc.fonts.ready callback
+```
+
+Foliate 源码为 Firefox 的 ResizeObserver 已知限制额外执行：
+
+```js
+doc.fonts.ready.then(() => this.expand())
+```
+
+当 iframe 已被切换 / 销毁后 Promise 才完成时，`expand()` 会访问失效 document。因此同一个安装期兼容补丁再为 `View.expand()` 增加 document guard：
+
+```js
+const document = this.document
+if (!document?.documentElement) return
+```
+
+这不是吞异常；失效 iframe 已经没有可执行的布局工作，guard 只跳过过期异步回调。
+
+### 9.3 补丁策略
+
+当前 `foliate-js@1.0.1` 尚未包含这些等价修复，因此项目执行：
 
 ```text
 npm install
@@ -198,21 +224,21 @@ scripts/patch-foliate.mjs
     ↓
 精确检查 1.0.1 paginator 源码
     ↓
-应用 #150 guard
+应用 render / expand lifecycle guards
 ```
 
-补丁不是模糊字符串替换：如果未来 Foliate 源码不再匹配 `1.0.1` 的已知结构，安装会直接失败并要求人工重新审查，避免升级后静默打错补丁。
+如果未来 Foliate 源码不再匹配 `1.0.1` 的已知结构，安装会直接失败并要求人工重新审查，避免升级后静默打错补丁。
 
-补丁前，同一 smoke 已出现“一次成功、一次生命周期竞争失败”；补丁后完整 CI + 三样本 smoke 连续两次通过。
+补丁前实际 CI 已分别复现 Chromium 和 Firefox 生命周期错误；补丁后 Chromium 三样本多次通过，Firefox 同一套三样本也通过。
 
-这个补丁应在上游正式发布等价修复后删除，而不是长期形成私有 fork。
+上游正式发布等价修复后应删除该兼容补丁，而不是长期维护私有 fork。
 
 ## 10. 当前 CI 门槛
 
 ```text
 npm install
   ↓
-foliate #150 compatibility patch
+foliate lifecycle compatibility patch
   ↓
 lint
   ↓
@@ -224,6 +250,10 @@ production build
   ↓
 3-book real EPUB Chromium smoke
   ↓
+install Playwright Firefox
+  ↓
+3-book real EPUB Firefox smoke
+  ↓
 zero pageerror
 ```
 
@@ -231,14 +261,13 @@ zero pageerror
 
 ## 11. P2 尚未关闭的验收项
 
-P2 还不能直接标记完成。Desktop Chromium 侧的核心链已经自动化，剩余重点是浏览器 / 真机差异：
+P2 还不能直接标记完成。Desktop Chromium / Firefox 的核心链已经自动化，剩余是真机差异：
 
-1. Firefox 至少验证 1 个横式 EPUB；
-2. Android Chromium 真机打开 / 触控翻页 / 关闭重开恢复；
-3. iOS Safari 真机打开 / 触控翻页 / 关闭重开恢复；
-4. 真实设备观察原始直式 EPUB 的明显排版问题，但 P2 不展开排版修复。
+1. Android Chromium 真机打开 / 触控翻页 / 关闭重开恢复；
+2. iOS Safari 真机打开 / 触控翻页 / 关闭重开恢复；
+3. 真实设备观察原始直式 EPUB 的明显排版问题，但 P2 不展开排版修复。
 
-《基地系列》的多 `BookPart` 隔离、《老人與海》的连续翻页 / 基础排版调整已经进入自动回归，不再列为人工 P2 阻塞项。
+这些不能用桌面浏览器的移动视口冒充完成。
 
 ## 12. P3 输入
 
