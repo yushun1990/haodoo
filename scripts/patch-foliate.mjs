@@ -59,22 +59,41 @@ const iframeLoadMethod = `    async load(src, afterLoad, beforeRender) {
         if (typeof src !== 'string') throw new Error(\`${'${src}'} is not string\`)
         return new Promise((resolve, reject) => {
             let settled = false
+            let usingSrcdoc = false
+
+            const cleanup = () => {
+                clearTimeout(timeout)
+                clearTimeout(srcdocFallbackTimer)
+                this.#iframe.removeEventListener('load', onLoad)
+                this.#iframe.removeEventListener('error', onError)
+            }
             const finish = (callback, value) => {
                 if (settled) return
                 settled = true
-                clearTimeout(timeout)
+                cleanup()
                 callback(value)
             }
-            const timeout = setTimeout(() => {
-                const kind = src.startsWith('blob:') ? 'blob URL' : src
-                finish(reject, new Error(\`Foliate section iframe load event did not complete within 8 seconds (${'${kind}'})\`))
-            }, 8000)
+            const onError = () => {
+                finish(reject, new Error('Foliate section iframe emitted an error event while loading'))
+            }
+            const onLoad = () => {
+                const doc = this.document
+                const documentURL = doc?.URL ?? ''
 
-            this.#iframe.addEventListener('load', () => {
+                // Some Android WebViews fire a delayed initial about:blank load after the
+                // iframe has already been inserted into the DOM. Foliate creates and appends
+                // the iframe before View.load() runs, so treating that event as the requested
+                // section would incorrectly mark an empty document as loaded.
+                if (!usingSrcdoc && src.startsWith('blob:') && (!documentURL || documentURL === 'about:blank')) {
+                    return
+                }
+                if (usingSrcdoc && documentURL === 'about:blank') return
+
                 try {
-                    const doc = this.document
                     if (!doc?.documentElement || !doc.body) {
-                        throw new Error('Foliate section iframe fired load without a usable document/body')
+                        throw new Error(
+                            \`Foliate section iframe loaded without a usable document/body (${'${documentURL || \'unknown URL\'}'})\`,
+                        )
                     }
                     afterLoad?.(doc)
 
@@ -100,10 +119,41 @@ const iframeLoadMethod = `    async load(src, afterLoad, beforeRender) {
                 } catch (error) {
                     finish(reject, error instanceof Error ? error : new Error(String(error)))
                 }
-            }, { once: true })
-            this.#iframe.addEventListener('error', () => {
-                finish(reject, new Error('Foliate section iframe emitted an error event while loading'))
-            }, { once: true })
+            }
+
+            // If a WebView cannot navigate a sandboxed iframe to a blob URL reliably,
+            // fetch the already-rewritten Foliate section and feed it through srcdoc.
+            // Normal browsers settle long before this fallback runs.
+            const srcdocFallbackTimer = setTimeout(async () => {
+                if (settled || !src.startsWith('blob:')) return
+                try {
+                    const response = await fetch(src)
+                    const html = await response.text()
+                    if (settled) return
+                    if (!html.trim()) throw new Error('Foliate section blob resolved to an empty document')
+                    usingSrcdoc = true
+                    this.#iframe.removeAttribute('src')
+                    this.#iframe.srcdoc = html
+                } catch (error) {
+                    finish(
+                        reject,
+                        error instanceof Error
+                            ? error
+                            : new Error(\`Foliate srcdoc fallback failed: ${'${String(error)}'}\`),
+                    )
+                }
+            }, 1200)
+
+            const timeout = setTimeout(() => {
+                const kind = src.startsWith('blob:') ? 'blob URL/srcdoc fallback' : src
+                finish(
+                    reject,
+                    new Error(\`Foliate section iframe did not load usable content within 8 seconds (${'${kind}'})\`),
+                )
+            }, 8000)
+
+            this.#iframe.addEventListener('load', onLoad)
+            this.#iframe.addEventListener('error', onError, { once: true })
             this.#iframe.src = src
         })
     }
@@ -112,7 +162,7 @@ const iframeLoadMethod = `    async load(src, afterLoad, beforeRender) {
 const currentLoadMethod = source.slice(loadStart, renderStart)
 if (currentLoadMethod !== iframeLoadMethod) {
   source = source.slice(0, loadStart) + iframeLoadMethod + source.slice(renderStart)
-  applied.push('View iframe-load diagnostics')
+  applied.push('View iframe blob/srcdoc compatibility')
 }
 
 await writeFile(target, source, 'utf8')
