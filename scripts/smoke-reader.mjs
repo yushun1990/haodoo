@@ -134,18 +134,20 @@ try {
     throw new Error('Horizontal and vertical EPUB positions share the same storage key')
   }
 
-  console.log('Reader smoke B: 《基地系列》 keeps BookPart positions isolated')
+  console.log('Reader smoke B: 《基地系列》 keeps readable BookPart positions isolated')
   await openBookBySearch(page, '基地系列', /基地系列/)
-  const parts = page.locator('.part-item')
-  const partCount = await parts.count()
-  if (partCount < 2) throw new Error(`Foundation sample should be multi-part, got ${partCount}`)
+  const readableParts = page.locator('.part-item:has(a.read-button[href$="/epub"])')
+  const readablePartCount = await readableParts.count()
+  if (readablePartCount < 2) {
+    throw new Error(`Foundation sample needs two horizontal-readable parts, got ${readablePartCount}`)
+  }
 
-  await parts.nth(0).getByRole('link', { name: '阅读横式' }).click()
+  await readableParts.nth(0).getByRole('link', { name: '阅读横式' }).click()
   await waitReaderReady(page)
   const foundationPartOne = await currentPosition(page)
   await page.locator('.reader-toolbar--top a[aria-label="返回书籍"]').click()
 
-  await parts.nth(1).getByRole('link', { name: '阅读横式' }).click()
+  await readableParts.nth(1).getByRole('link', { name: '阅读横式' }).click()
   await waitReaderReady(page)
   const foundationPartTwo = await currentPosition(page)
   if (foundationPartOne.key === foundationPartTwo.key) {
