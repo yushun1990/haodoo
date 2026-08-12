@@ -13,7 +13,8 @@
     "lint": "oxlint src scripts vite.config.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:reader-smoke": "node scripts/smoke-reader.mjs"
   },
   "dependencies": {
     "foliate-js": "1.0.1",
@@ -27,6 +28,7 @@
     "@vitejs/plugin-react": "^6.0.1",
     "csv-parse": "^6.1.0",
     "oxlint": "^1.51.0",
+    "playwright-core": "^1.54.2",
     "prettier": "^3.6.2",
     "tsx": "^4.20.5",
     "typescript": "~6.0.2",
