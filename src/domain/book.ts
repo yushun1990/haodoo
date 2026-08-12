@@ -15,9 +15,12 @@ export interface BookSeries {
   order?: number
 }
 
-export interface BookVolume {
+export interface BookPart {
+  id: string
   track?: string
   title?: string
+  epub?: BookResource
+  verticalEpub?: BookResource
 }
 
 export interface Book {
@@ -26,11 +29,9 @@ export interface Book {
   author: string
   category?: string
   series?: BookSeries
-  volume?: BookVolume
   cover?: BookResource
   description?: BookResource
-  epub?: BookResource
-  verticalEpub?: BookResource
+  parts: BookPart[]
   publishedAt?: string
   modifiedAt?: string
   source: BookSourceRef
