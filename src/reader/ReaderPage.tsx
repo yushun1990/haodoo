@@ -96,7 +96,7 @@ function ReaderSettings({
 
 export function ReaderPage({ book, part, resourceKind }: ReaderPageProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const engineRef = useRef<ReaderEngine>()
+  const engineRef = useRef<ReaderEngine | undefined>(undefined)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [error, setError] = useState<string>()
   const [toc, setToc] = useState<ReaderTocItem[]>([])
