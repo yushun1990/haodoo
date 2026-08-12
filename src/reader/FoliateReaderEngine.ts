@@ -1,0 +1,190 @@
+import type {
+  ReaderEngine,
+  ReaderLocation,
+  ReaderOpenOptions,
+  ReaderPreferences,
+  ReaderSource,
+  ReaderTocItem,
+} from './ReaderEngine'
+
+interface FoliateTocItem {
+  label?: string
+  href?: string
+  subitems?: FoliateTocItem[]
+}
+
+interface FoliateBook {
+  toc?: FoliateTocItem[]
+}
+
+interface FoliateRenderer extends HTMLElement {
+  getContents?: () => Array<{ doc?: Document }>
+}
+
+interface FoliateViewElement extends HTMLElement {
+  book?: FoliateBook
+  renderer?: FoliateRenderer
+  open: (source: string) => Promise<void>
+  init: (options: { lastLocation?: string; showTextStart?: boolean }) => Promise<void>
+  next: () => Promise<void>
+  prev: () => Promise<void>
+  goTo: (target: string) => Promise<unknown>
+  close: () => void
+}
+
+interface FoliateRelocateDetail {
+  cfi?: string
+  fraction?: number
+  tocItem?: { label?: string }
+}
+
+interface FoliateLoadDetail {
+  doc?: Document
+}
+
+function normalizeToc(items: FoliateTocItem[] | undefined): ReaderTocItem[] {
+  if (!items) return []
+
+  return items.flatMap((item) => {
+    if (!item.href || !item.label) return []
+    return [
+      {
+        label: item.label.trim(),
+        href: item.href,
+        children: normalizeToc(item.subitems),
+      },
+    ]
+  })
+}
+
+export class FoliateReaderEngine implements ReaderEngine {
+  #view?: FoliateViewElement
+  #container?: HTMLElement
+  #toc: ReaderTocItem[] = []
+  #listeners = new Set<(location: ReaderLocation) => void>()
+  #preferences?: ReaderPreferences
+
+  async open(
+    container: HTMLElement,
+    source: ReaderSource,
+    options: ReaderOpenOptions,
+  ): Promise<void> {
+    this.close()
+    this.#container = container
+    this.#preferences = options.preferences
+
+    await import('foliate-js/view.js')
+
+    const view = document.createElement('foliate-view') as FoliateViewElement
+    view.className = 'reader-engine-view'
+    view.addEventListener('load', this.#handleLoad as EventListener)
+    view.addEventListener('relocate', this.#handleRelocate as EventListener)
+    container.replaceChildren(view)
+    this.#view = view
+
+    await view.open(source.url)
+    this.#toc = normalizeToc(view.book?.toc)
+    this.#applyPreferences()
+    await view.init({
+      lastLocation: options.location?.cfi,
+      showTextStart: !options.location,
+    })
+  }
+
+  close(): void {
+    if (this.#view) {
+      this.#view.removeEventListener('load', this.#handleLoad as EventListener)
+      this.#view.removeEventListener('relocate', this.#handleRelocate as EventListener)
+      this.#view.close()
+      this.#view.remove()
+    }
+    this.#container?.replaceChildren()
+    this.#view = undefined
+    this.#container = undefined
+    this.#toc = []
+  }
+
+  async next(): Promise<void> {
+    await this.#view?.next()
+  }
+
+  async prev(): Promise<void> {
+    await this.#view?.prev()
+  }
+
+  async goTo(target: string): Promise<void> {
+    await this.#view?.goTo(target)
+  }
+
+  getToc(): ReaderTocItem[] {
+    return this.#toc
+  }
+
+  setPreferences(preferences: ReaderPreferences): void {
+    this.#preferences = preferences
+    this.#applyPreferences()
+  }
+
+  onLocationChange(listener: (location: ReaderLocation) => void): () => void {
+    this.#listeners.add(listener)
+    return () => this.#listeners.delete(listener)
+  }
+
+  #handleLoad = (event: CustomEvent<FoliateLoadDetail>): void => {
+    if (event.detail.doc) this.#applyDocumentPreferences(event.detail.doc)
+  }
+
+  #handleRelocate = (event: CustomEvent<FoliateRelocateDetail>): void => {
+    const { cfi, fraction, tocItem } = event.detail
+    if (!cfi) return
+
+    const location: ReaderLocation = {
+      cfi,
+      fraction: typeof fraction === 'number' ? fraction : undefined,
+      chapter: tocItem?.label?.trim() || undefined,
+    }
+    for (const listener of this.#listeners) listener(location)
+  }
+
+  #applyPreferences(): void {
+    const view = this.#view
+    const preferences = this.#preferences
+    if (!view || !preferences) return
+
+    const renderer = view.renderer
+    renderer?.setAttribute('flow', 'paginated')
+    renderer?.setAttribute('gap', `${preferences.pageGap}%`)
+    renderer?.setAttribute('margin', `${preferences.chromeMargin}px`)
+    renderer?.setAttribute('max-column-count', '1')
+
+    for (const content of renderer?.getContents?.() ?? []) {
+      if (content.doc) this.#applyDocumentPreferences(content.doc)
+    }
+  }
+
+  #applyDocumentPreferences(doc: Document): void {
+    const preferences = this.#preferences
+    if (!preferences) return
+
+    let style = doc.querySelector<HTMLStyleElement>('style[data-haodoo-reader]')
+    if (!style) {
+      style = doc.createElement('style')
+      style.dataset.haodooReader = 'true'
+      doc.head.append(style)
+    }
+
+    style.textContent = `
+      html, body {
+        text-rendering: optimizeLegibility;
+      }
+      body {
+        font-size: ${preferences.fontScale}% !important;
+        line-height: ${preferences.lineHeight} !important;
+      }
+      img, svg, video {
+        max-width: 100% !important;
+        height: auto;
+      }
+    `
+  }
+}
