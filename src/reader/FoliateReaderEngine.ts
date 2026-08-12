@@ -42,6 +42,39 @@ interface FoliateLoadDetail {
   doc?: Document
 }
 
+function ensureFoliateBrowserCompatibility(): void {
+  const arrayPrototype = Array.prototype as typeof Array.prototype & {
+    at?: (index: number) => unknown
+  }
+
+  if (typeof arrayPrototype.at !== 'function') {
+    Object.defineProperty(Array.prototype, 'at', {
+      value(this: unknown[], index: number) {
+        const length = Number(this.length) || 0
+        let relativeIndex = Math.trunc(Number(index) || 0)
+        if (relativeIndex < 0) relativeIndex += length
+        if (relativeIndex < 0 || relativeIndex >= length) return undefined
+        return this[relativeIndex]
+      },
+      writable: true,
+      configurable: true,
+    })
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeoutId: number | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = window.setTimeout(() => reject(new Error(message)), timeoutMs)
+  })
+
+  try {
+    return await Promise.race([promise, timeout])
+  } finally {
+    if (timeoutId !== undefined) window.clearTimeout(timeoutId)
+  }
+}
+
 function normalizeToc(items: FoliateTocItem[] | undefined): ReaderTocItem[] {
   if (!items) return []
 
@@ -73,6 +106,7 @@ export class FoliateReaderEngine implements ReaderEngine {
     this.#container = container
     this.#preferences = options.preferences
 
+    ensureFoliateBrowserCompatibility()
     await import('foliate-js/view.js')
 
     const view = document.createElement('foliate-view') as FoliateViewElement
@@ -82,13 +116,21 @@ export class FoliateReaderEngine implements ReaderEngine {
     container.replaceChildren(view)
     this.#view = view
 
-    await view.open(source.url)
+    await withTimeout(
+      view.open(source.url),
+      30_000,
+      'EPUB 下载或解析超过 30 秒。请检查当前浏览器对阅读引擎的兼容性或网络连接。',
+    )
     this.#toc = normalizeToc(view.book?.toc)
     this.#applyPreferences()
-    await view.init({
-      lastLocation: options.location?.cfi,
-      showTextStart: !options.location,
-    })
+    await withTimeout(
+      view.init({
+        lastLocation: options.location?.cfi,
+        showTextStart: !options.location,
+      }),
+      15_000,
+      'EPUB 已载入，但分页初始化超过 15 秒。当前移动浏览器可能与 Foliate 阅读引擎不兼容。',
+    )
   }
 
   close(): void {
