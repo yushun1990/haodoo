@@ -35,3 +35,9 @@ jobs:
 
       - name: Reader smoke test in Chromium
         run: npm run test:reader-smoke
+
+      - name: Install Playwright Firefox
+        run: npx playwright-core install firefox
+
+      - name: Reader smoke test in Firefox
+        run: READER_BROWSER=firefox npm run test:reader-smoke
