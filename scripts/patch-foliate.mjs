@@ -23,6 +23,18 @@ const replacements = [
         const { documentElement } = document
         if (this.#column) {`,
   },
+  {
+    name: 'Paginator section-load error propagation',
+    original: `                .catch(e => {
+                    console.warn(e)
+                    console.warn(new Error(\`Failed to load section \${index}\`))
+                    return {}
+                }))`,
+    patched: `                .catch(e => {
+                    console.warn(new Error(\`Failed to load section \${index}\`))
+                    throw e
+                }))`,
+  },
 ]
 
 let source = await readFile(target, 'utf8')
@@ -32,7 +44,7 @@ for (const replacement of replacements) {
   if (source.includes(replacement.patched)) continue
   if (!source.includes(replacement.original)) {
     throw new Error(
-      `foliate-js paginator source no longer matches the 1.0.1 compatibility patch: ${replacement.name}. Review upstream issue #150 before upgrading.`,
+      `foliate-js paginator source no longer matches the 1.0.1 compatibility patch: ${replacement.name}. Review upstream issues #146 and #150 before upgrading.`,
     )
   }
   source = source.replace(replacement.original, replacement.patched)
@@ -41,7 +53,7 @@ for (const replacement of replacements) {
 
 if (applied.length > 0) {
   await writeFile(target, source, 'utf8')
-  console.log(`Applied foliate-js lifecycle patches: ${applied.join(', ')}`)
+  console.log(`Applied foliate-js compatibility patches: ${applied.join(', ')}`)
 } else {
-  console.log('foliate-js paginator lifecycle patches already applied')
+  console.log('foliate-js compatibility patches already applied')
 }
