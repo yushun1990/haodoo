@@ -1,0 +1,19 @@
+{
+  "name": "Haodoo · 好读",
+  "short_name": "Haodoo",
+  "description": "非官方好读 PWA 客户端，更方便地找书，更舒服地读书。",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f0e8",
+  "theme_color": "#f4f0e8",
+  "lang": "zh-Hant",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
