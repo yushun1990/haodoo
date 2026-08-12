@@ -95,14 +95,19 @@ try {
   })
   const page = await context.newPage()
 
+  let stage = 'startup'
   const browserErrors = []
-  page.on('pageerror', (error) => browserErrors.push(error.message))
+  page.on('pageerror', (error) => {
+    browserErrors.push({ stage, message: error.message, stack: error.stack })
+  })
 
+  stage = 'little-prince-horizontal-open'
   console.log('Reader smoke A: 《【小王子】》 horizontal open → page → CFI restore')
   await openBookBySearch(page, '小王子', /^【小王子】$/)
   await page.getByRole('link', { name: '阅读横式' }).click()
   await waitReaderReady(page)
 
+  stage = 'little-prince-horizontal-next'
   const initial = await currentPosition(page)
   const nextButton = page.getByRole('button', { name: '下一页' })
   await nextButton.click()
@@ -113,6 +118,7 @@ try {
   )
   const advanced = await currentPosition(page)
 
+  stage = 'little-prince-horizontal-reopen'
   await page.locator('.reader-toolbar--top a[aria-label="返回书籍"]').click()
   await page.getByRole('link', { name: '阅读横式' }).click()
   await waitReaderReady(page)
@@ -122,6 +128,7 @@ try {
     throw new Error('Little Prince horizontal CFI was not restored')
   }
 
+  stage = 'little-prince-vertical-open'
   console.log('Reader smoke A2: 《【小王子】》 original vertical EPUB opens independently')
   await page.locator('.reader-toolbar--top a[aria-label="返回书籍"]').click()
   await page.getByRole('link', { name: '阅读直式' }).click()
@@ -134,6 +141,7 @@ try {
     throw new Error('Horizontal and vertical EPUB positions share the same storage key')
   }
 
+  stage = 'foundation-first-part'
   console.log('Reader smoke B: 《基地系列》 keeps readable BookPart positions isolated')
   await openBookBySearch(page, '基地系列', /基地系列/)
   const readableParts = page.locator('.part-item:has(a.read-button[href$="/epub"])')
@@ -145,6 +153,7 @@ try {
   await readableParts.nth(0).getByRole('link', { name: '阅读横式' }).click()
   await waitReaderReady(page)
   const foundationPartOne = await currentPosition(page)
+  stage = 'foundation-second-part'
   await page.locator('.reader-toolbar--top a[aria-label="返回书籍"]').click()
 
   await readableParts.nth(1).getByRole('link', { name: '阅读横式' }).click()
@@ -154,12 +163,14 @@ try {
     throw new Error('Different Foundation BookParts share the same reading-position key')
   }
 
+  stage = 'old-man-open'
   console.log('Reader smoke C: 《老人與海》 long-text paging + runtime typography controls')
   await openBookBySearch(page, '老人與海', /老人與海/)
   await page.getByRole('link', { name: '阅读横式' }).click()
   await waitReaderReady(page)
   const oldManInitial = await currentPosition(page)
 
+  stage = 'old-man-next'
   await page.getByRole('button', { name: '下一页' }).click()
   await page.waitForFunction(
     ({ key, value }) => localStorage.getItem(key) !== value,
@@ -167,6 +178,7 @@ try {
     { timeout: 15_000 },
   )
 
+  stage = 'old-man-typography'
   await page.getByRole('button', { name: '排版' }).click()
   const fontSize = page.locator('.reader-settings label').filter({ hasText: '字号' }).locator('input')
   const lineHeight = page.locator('.reader-settings label').filter({ hasText: '行距' }).locator('input')
@@ -176,12 +188,16 @@ try {
 
   const activeNext = page.getByRole('button', { name: '下一页' })
   if (await activeNext.isDisabled()) throw new Error('Reader became unavailable after typography changes')
+  stage = 'old-man-after-typography-next'
   await activeNext.click()
   await page.waitForTimeout(150)
   await currentPosition(page)
 
   if (browserErrors.length) {
-    throw new Error(`Browser page errors: ${browserErrors.join(' | ')}`)
+    const detail = browserErrors
+      .map((error) => `[${error.stage}] ${error.stack ?? error.message}`)
+      .join('\n---\n')
+    throw new Error(`Browser page errors:\n${detail}`)
   }
 
   console.log(
