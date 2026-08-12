@@ -45,8 +45,11 @@ try {
 
   await page.goto(baseUrl, { waitUntil: 'networkidle' })
   await page.getByPlaceholder('搜索书名、作者或系列').fill('小王子')
-  await page.locator('.book-card', { hasText: '小王子' }).first().click()
-  await page.getByRole('heading', { name: '小王子' }).waitFor()
+
+  const princeHeading = page.locator('.book-card h2').filter({ hasText: /^【小王子】$/ }).first()
+  await princeHeading.waitFor()
+  await princeHeading.click()
+  await page.locator('.detail-card h1').filter({ hasText: /^【小王子】$/ }).waitFor()
   await page.getByRole('link', { name: '阅读横式' }).click()
 
   const nextButton = page.getByRole('button', { name: '下一页' })
