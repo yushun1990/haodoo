@@ -1,0 +1,72 @@
+.part-list {
+  margin-top: 20px;
+}
+
+.part-list > h2 {
+  margin: 0 0 10px;
+  font-family: "Noto Serif TC", "Songti TC", serif;
+  font-size: 1rem;
+}
+
+.part-item {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 13px 0;
+  border-top: 1px solid var(--line);
+}
+
+.part-item > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.part-item strong {
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.part-item span {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.part-item .resource-row {
+  margin-top: 0;
+}
+
+.resource-empty {
+  display: inline-block;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.part-item .resource-empty {
+  margin-top: 0;
+}
+
+.description-link {
+  margin-top: 18px;
+}
+
+.description-link a {
+  color: var(--accent);
+  font-size: 0.82rem;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+@media (min-width: 640px) {
+  .part-item {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+  }
+
+  .part-item .resource-row {
+    justify-content: flex-end;
+  }
+}
