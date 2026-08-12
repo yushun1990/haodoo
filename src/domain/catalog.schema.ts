@@ -5,6 +5,14 @@ const ResourceSchema = z.object({
   mediaType: z.string().optional(),
 })
 
+const PartSchema = z.object({
+  id: z.string().min(1),
+  track: z.string().optional(),
+  title: z.string().optional(),
+  epub: ResourceSchema.optional(),
+  verticalEpub: ResourceSchema.optional(),
+})
+
 const BookSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
@@ -16,16 +24,9 @@ const BookSchema = z.object({
       order: z.number().optional(),
     })
     .optional(),
-  volume: z
-    .object({
-      track: z.string().optional(),
-      title: z.string().optional(),
-    })
-    .optional(),
   cover: ResourceSchema.optional(),
   description: ResourceSchema.optional(),
-  epub: ResourceSchema.optional(),
-  verticalEpub: ResourceSchema.optional(),
+  parts: z.array(PartSchema).min(1),
   publishedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   modifiedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   source: z.object({
