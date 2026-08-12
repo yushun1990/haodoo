@@ -1,8 +1,14 @@
 import { existsSync } from 'node:fs'
 import { spawn } from 'node:child_process'
-import { chromium } from 'playwright-core'
+import { chromium, firefox } from 'playwright-core'
 
 const baseUrl = 'http://127.0.0.1:4173'
+const browserName = process.env.READER_BROWSER ?? 'chromium'
+
+if (!['chromium', 'firefox'].includes(browserName)) {
+  throw new Error(`Unsupported READER_BROWSER: ${browserName}`)
+}
+
 const chromeCandidates = [
   process.env.CHROME_PATH,
   '/usr/bin/google-chrome',
@@ -11,11 +17,12 @@ const chromeCandidates = [
   '/usr/bin/chromium-browser',
 ].filter(Boolean)
 
-const executablePath = chromeCandidates.find((path) => existsSync(path))
-if (!executablePath) {
+const chromiumPath = chromeCandidates.find((path) => existsSync(path))
+if (browserName === 'chromium' && !chromiumPath) {
   throw new Error(`No system Chromium found. Checked: ${chromeCandidates.join(', ')}`)
 }
 
+const browserType = browserName === 'firefox' ? firefox : chromium
 const server = spawn(
   process.execPath,
   ['node_modules/vite/bin/vite.js', 'preview', '--host', '127.0.0.1', '--port', '4173'],
@@ -86,12 +93,16 @@ const currentPosition = async (page) => {
 let browser
 try {
   await waitForServer()
-  browser = await chromium.launch({ executablePath, headless: true })
+  browser = await browserType.launch(
+    browserName === 'chromium'
+      ? { executablePath: chromiumPath, headless: true }
+      : { headless: true },
+  )
+
   const context = await browser.newContext({
     viewport: { width: 390, height: 844 },
-    isMobile: true,
-    hasTouch: true,
     deviceScaleFactor: 2,
+    ...(browserName === 'chromium' ? { isMobile: true, hasTouch: true } : {}),
   })
   const page = await context.newPage()
 
@@ -102,7 +113,7 @@ try {
   })
 
   stage = 'little-prince-horizontal-open'
-  console.log('Reader smoke A: 《【小王子】》 horizontal open → page → CFI restore')
+  console.log(`[${browserName}] Reader smoke A: 《【小王子】》 horizontal open → page → CFI restore`)
   await openBookBySearch(page, '小王子', /^【小王子】$/)
   await page.getByRole('link', { name: '阅读横式' }).click()
   await waitReaderReady(page)
@@ -129,7 +140,7 @@ try {
   }
 
   stage = 'little-prince-vertical-open'
-  console.log('Reader smoke A2: 《【小王子】》 original vertical EPUB opens independently')
+  console.log(`[${browserName}] Reader smoke A2: 《【小王子】》 original vertical EPUB opens independently`)
   await page.locator('.reader-toolbar--top a[aria-label="返回书籍"]').click()
   await page.getByRole('link', { name: '阅读直式' }).click()
   await waitReaderReady(page)
@@ -142,7 +153,7 @@ try {
   }
 
   stage = 'foundation-first-part'
-  console.log('Reader smoke B: 《基地系列》 keeps readable BookPart positions isolated')
+  console.log(`[${browserName}] Reader smoke B: 《基地系列》 keeps readable BookPart positions isolated`)
   await openBookBySearch(page, '基地系列', /基地系列/)
   const readableParts = page.locator('.part-item:has(a.read-button[href$="/epub"])')
   const readablePartCount = await readableParts.count()
@@ -164,7 +175,7 @@ try {
   }
 
   stage = 'old-man-open'
-  console.log('Reader smoke C: 《老人與海》 long-text paging + runtime typography controls')
+  console.log(`[${browserName}] Reader smoke C: 《老人與海》 long-text paging + runtime typography controls`)
   await openBookBySearch(page, '老人與海', /老人與海/)
   await page.getByRole('link', { name: '阅读横式' }).click()
   await waitReaderReady(page)
@@ -201,7 +212,7 @@ try {
   }
 
   console.log(
-    'Reader smoke test passed: 3 real books, horizontal + vertical, multi-part isolation, paging, CFI restore, typography',
+    `[${browserName}] Reader smoke passed: 3 real books, horizontal + vertical, multi-part isolation, paging, CFI restore, typography`,
   )
 } finally {
   await browser?.close()
