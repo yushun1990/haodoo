@@ -2,22 +2,46 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 const target = resolve('node_modules/foliate-js/paginator.js')
-const original = `    render() {
+const replacements = [
+  {
+    name: 'Paginator.render detached-document guard',
+    original: `    render() {
         if (!this.#view) return
-        this.#view.render(this.#beforeRender({`
-const patched = `    render() {
+        this.#view.render(this.#beforeRender({`,
+    patched: `    render() {
         if (!this.#view?.document?.body) return
-        this.#view.render(this.#beforeRender({`
+        this.#view.render(this.#beforeRender({`,
+  },
+  {
+    name: 'View.expand detached-document guard',
+    original: `    expand() {
+        const { documentElement } = this.document
+        if (this.#column) {`,
+    patched: `    expand() {
+        const document = this.document
+        if (!document?.documentElement) return
+        const { documentElement } = document
+        if (this.#column) {`,
+  },
+]
 
-const source = await readFile(target, 'utf8')
+let source = await readFile(target, 'utf8')
+const applied = []
 
-if (source.includes(patched)) {
-  console.log('foliate-js paginator lifecycle patch already applied')
-} else if (source.includes(original)) {
-  await writeFile(target, source.replace(original, patched), 'utf8')
-  console.log('Applied foliate-js #150 paginator lifecycle patch')
+for (const replacement of replacements) {
+  if (source.includes(replacement.patched)) continue
+  if (!source.includes(replacement.original)) {
+    throw new Error(
+      `foliate-js paginator source no longer matches the 1.0.1 compatibility patch: ${replacement.name}. Review upstream issue #150 before upgrading.`,
+    )
+  }
+  source = source.replace(replacement.original, replacement.patched)
+  applied.push(replacement.name)
+}
+
+if (applied.length > 0) {
+  await writeFile(target, source, 'utf8')
+  console.log(`Applied foliate-js lifecycle patches: ${applied.join(', ')}`)
 } else {
-  throw new Error(
-    'foliate-js paginator source no longer matches the 1.0.1 compatibility patch. Review upstream issue #150 before upgrading.',
-  )
+  console.log('foliate-js paginator lifecycle patches already applied')
 }
