@@ -1,31 +1,62 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Book, BookPart, Catalog } from './domain/book'
+import { ReaderPage } from './reader/ReaderPage'
+import type { ReaderResourceKind } from './reader/ReaderEngine'
 
 const PAGE_SIZE = 48
 
-function parseBookId(): string | undefined {
-  const match = window.location.hash.match(/^#book\/(.+)$/)
-  if (!match) return undefined
+type Route =
+  | { kind: 'catalog' }
+  | { kind: 'book'; bookId: string }
+  | { kind: 'reader'; bookId: string; partId: string; resourceKind: ReaderResourceKind }
+
+function decodeRoutePart(value: string): string {
   try {
-    return decodeURIComponent(match[1])
+    return decodeURIComponent(value)
   } catch {
-    return match[1]
+    return value
   }
 }
 
-function useBookId(): string | undefined {
-  const [bookId, setBookId] = useState(parseBookId)
+function parseRoute(): Route {
+  const hash = window.location.hash.replace(/^#/, '')
+  if (!hash) return { kind: 'catalog' }
+
+  const parts = hash.split('/')
+  if (parts[0] === 'book' && parts[1]) {
+    return { kind: 'book', bookId: decodeRoutePart(parts[1]) }
+  }
+
+  if (
+    parts[0] === 'read' &&
+    parts[1] &&
+    parts[2] &&
+    (parts[3] === 'epub' || parts[3] === 'verticalEpub')
+  ) {
+    return {
+      kind: 'reader',
+      bookId: decodeRoutePart(parts[1]),
+      partId: decodeRoutePart(parts[2]),
+      resourceKind: parts[3],
+    }
+  }
+
+  return { kind: 'catalog' }
+}
+
+function useRoute(): Route {
+  const [route, setRoute] = useState(parseRoute)
 
   useEffect(() => {
     const onHashChange = () => {
-      setBookId(parseBookId())
+      setRoute(parseRoute())
       window.scrollTo({ top: 0 })
     }
     window.addEventListener('hashchange', onHashChange)
     return () => window.removeEventListener('hashchange', onHashChange)
   }, [])
 
-  return bookId
+  return route
 }
 
 function useCatalog(): { catalog?: Catalog; error?: string } {
@@ -89,30 +120,48 @@ function BookCard({ book }: { book: Book }) {
   )
 }
 
-function ResourceLinks({ part }: { part: BookPart }) {
+function readerHref(book: Book, part: BookPart, resourceKind: ReaderResourceKind): string {
+  return `#read/${encodeURIComponent(book.id)}/${encodeURIComponent(part.id)}/${resourceKind}`
+}
+
+function ResourceLinks({ book, part }: { book: Book; part: BookPart }) {
   if (!part.epub && !part.verticalEpub) {
     return <span className="resource-empty">暂无 EPUB</span>
   }
 
   return (
-    <div className="resource-row">
-      {part.epub && (
-        <a href={part.epub.url} target="_blank" rel="noreferrer">
-          横排 EPUB
-        </a>
-      )}
-      {part.verticalEpub && (
-        <a href={part.verticalEpub.url} target="_blank" rel="noreferrer">
-          竖排 EPUB
-        </a>
-      )}
+    <div className="resource-group">
+      <div className="read-row">
+        {part.epub && (
+          <a className="read-button" href={readerHref(book, part, 'epub')}>
+            阅读横式
+          </a>
+        )}
+        {part.verticalEpub && (
+          <a className="read-button read-button--secondary" href={readerHref(book, part, 'verticalEpub')}>
+            阅读直式
+          </a>
+        )}
+      </div>
+      <div className="resource-row resource-row--raw">
+        {part.epub && (
+          <a href={part.epub.url} target="_blank" rel="noreferrer">
+            原始横式 EPUB
+          </a>
+        )}
+        {part.verticalEpub && (
+          <a href={part.verticalEpub.url} target="_blank" rel="noreferrer">
+            原始直式 EPUB
+          </a>
+        )}
+      </div>
     </div>
   )
 }
 
 function PartList({ book }: { book: Book }) {
   if (book.parts.length === 1) {
-    return <ResourceLinks part={book.parts[0]} />
+    return <ResourceLinks book={book} part={book.parts[0]} />
   }
 
   return (
@@ -124,7 +173,7 @@ function PartList({ book }: { book: Book }) {
             <strong>{part.title ?? part.track ?? `第 ${index + 1} 册`}</strong>
             {part.track && part.title && <span>{part.track}</span>}
           </div>
-          <ResourceLinks part={part} />
+          <ResourceLinks book={book} part={part} />
         </article>
       ))}
     </section>
@@ -184,10 +233,6 @@ function BookDetail({ book }: { book: Book }) {
               </a>
             </div>
           )}
-
-          <button className="reader-placeholder" type="button" disabled>
-            阅读器将在 P2 接入
-          </button>
         </div>
       </section>
     </main>
@@ -314,7 +359,7 @@ function CatalogPage({ catalog }: { catalog: Catalog }) {
 
 export default function App() {
   const { catalog, error } = useCatalog()
-  const bookId = useBookId()
+  const route = useRoute()
 
   if (error) {
     return (
@@ -335,14 +380,34 @@ export default function App() {
     )
   }
 
-  if (bookId) {
-    const book = catalog.books.find((item) => item.id === bookId)
+  if (route.kind === 'reader') {
+    const book = catalog.books.find((item) => item.id === route.bookId)
+    const part = book?.parts.find((item) => item.id === route.partId)
+    const resource = route.resourceKind === 'verticalEpub' ? part?.verticalEpub : part?.epub
+
+    if (book && part && resource) {
+      return <ReaderPage book={book} part={part} resourceKind={route.resourceKind} />
+    }
+
+    return (
+      <main className="page status-page">
+        <h1>找不到这个阅读资源</h1>
+        <p>书籍、卷册或 EPUB 地址已经发生变化。</p>
+        <a className="back-link" href={book ? `#book/${encodeURIComponent(book.id)}` : '#'}>
+          ← 返回
+        </a>
+      </main>
+    )
+  }
+
+  if (route.kind === 'book') {
+    const book = catalog.books.find((item) => item.id === route.bookId)
     if (book) return <BookDetail book={book} />
 
     return (
       <main className="page status-page">
         <h1>找不到这本书</h1>
-        <p>书码：{bookId}</p>
+        <p>书码：{route.bookId}</p>
         <a className="back-link" href="#">
           ← 返回书目
         </a>
