@@ -4,6 +4,7 @@
   "version": "0.2.0",
   "type": "module",
   "scripts": {
+    "postinstall": "node scripts/patch-foliate.mjs",
     "sync:classic": "tsx scripts/sync-classic.ts",
     "predev": "npm run sync:classic",
     "dev": "vite",
