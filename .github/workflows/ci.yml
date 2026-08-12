@@ -32,3 +32,6 @@ jobs:
 
       - name: Build with Classic catalog
         run: npm run build
+
+      - name: Reader smoke test in Chromium
+        run: npm run test:reader-smoke
