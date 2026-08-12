@@ -36,83 +36,155 @@ const waitForServer = async () => {
   throw new Error('Vite preview did not start in time')
 }
 
+const openCatalog = async (page) => {
+  await page.goto(baseUrl, { waitUntil: 'networkidle' })
+}
+
+const openBookBySearch = async (page, query, titlePattern) => {
+  await openCatalog(page)
+  await page.getByPlaceholder('搜索书名、作者或系列').fill(query)
+  const heading = page.locator('.book-card h2').filter({ hasText: titlePattern }).first()
+  await heading.waitFor()
+  await heading.click()
+  await page.locator('.detail-card h1').filter({ hasText: titlePattern }).waitFor()
+}
+
+const waitReaderReady = async (page) => {
+  await page.waitForFunction(() => {
+    const button = [...document.querySelectorAll('button')].find((item) => item.textContent?.trim() === '下一页')
+    return button && !button.disabled
+  }, undefined, { timeout: 30_000 })
+
+  await page.waitForFunction(
+    () => document.querySelector('.reader-progress strong')?.textContent?.trim() !== '—',
+    undefined,
+    { timeout: 30_000 },
+  )
+}
+
+const readingPositions = async (page) =>
+  page.evaluate(() =>
+    Object.keys(localStorage)
+      .filter((key) => key.startsWith('haodoo.reader.position.v1:'))
+      .sort()
+      .map((key) => ({ key, value: localStorage.getItem(key) })),
+  )
+
+const currentPosition = async (page) => {
+  const positions = await readingPositions(page)
+  const hash = decodeURIComponent(new URL(page.url()).hash)
+  const route = hash.match(/^#read\/([^/]+)\/([^/]+)\/(epub|verticalEpub)$/)
+  if (!route) throw new Error(`Not on a reader route: ${hash}`)
+
+  const [, bookId, partId, kind] = route
+  const suffix = `:${bookId}:${partId}:${kind}`
+  const position = positions.find((item) => item.key.endsWith(suffix))
+  if (!position?.value) throw new Error(`No persisted reader position for ${suffix}`)
+  return position
+}
+
 let browser
 try {
   await waitForServer()
   browser = await chromium.launch({ executablePath, headless: true })
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+    deviceScaleFactor: 2,
+  })
+  const page = await context.newPage()
 
   const browserErrors = []
   page.on('pageerror', (error) => browserErrors.push(error.message))
 
-  console.log('Reader smoke: opening catalog')
-  await page.goto(baseUrl, { waitUntil: 'networkidle' })
-  await page.getByPlaceholder('搜索书名、作者或系列').fill('小王子')
-
-  const princeHeading = page.locator('.book-card h2').filter({ hasText: /^【小王子】$/ }).first()
-  await princeHeading.waitFor()
-  await princeHeading.click()
-  await page.locator('.detail-card h1').filter({ hasText: /^【小王子】$/ }).waitFor()
-
-  console.log('Reader smoke: opening real remote EPUB')
+  console.log('Reader smoke A: 《【小王子】》 horizontal open → page → CFI restore')
+  await openBookBySearch(page, '小王子', /^【小王子】$/)
   await page.getByRole('link', { name: '阅读横式' }).click()
+  await waitReaderReady(page)
 
+  const initial = await currentPosition(page)
   const nextButton = page.getByRole('button', { name: '下一页' })
-  await page.waitForFunction(() => {
-    const button = [...document.querySelectorAll('button')].find((item) => item.textContent?.trim() === '下一页')
-    return button && !button.disabled
-  }, undefined, { timeout: 30_000 })
-
-  await page.waitForFunction(
-    () => document.querySelector('.reader-progress strong')?.textContent?.trim() !== '—',
-    undefined,
-    { timeout: 30_000 },
-  )
-
-  const position = await page.evaluate(() => {
-    const key = Object.keys(localStorage).find((item) => item.startsWith('haodoo.reader.position.v1:'))
-    return key ? { key, value: localStorage.getItem(key) } : null
-  })
-
-  if (!position?.key || !position.value) {
-    throw new Error('Reader did not persist an EPUB CFI position')
-  }
-
-  console.log('Reader smoke: paging and checking CFI change')
   await nextButton.click()
   await page.waitForFunction(
     ({ key, value }) => localStorage.getItem(key) !== value,
-    position,
+    initial,
+    { timeout: 15_000 },
+  )
+  const advanced = await currentPosition(page)
+
+  await page.locator('.reader-toolbar--top a[aria-label="返回书籍"]').click()
+  await page.getByRole('link', { name: '阅读横式' }).click()
+  await waitReaderReady(page)
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  const restored = await currentPosition(page)
+  if (restored.value !== advanced.value) {
+    throw new Error('Little Prince horizontal CFI was not restored')
+  }
+
+  console.log('Reader smoke A2: 《【小王子】》 original vertical EPUB opens independently')
+  await page.locator('.reader-toolbar--top a[aria-label="返回书籍"]').click()
+  await page.getByRole('link', { name: '阅读直式' }).click()
+  await waitReaderReady(page)
+  const verticalPosition = await currentPosition(page)
+  if (!verticalPosition.key.endsWith(':verticalEpub')) {
+    throw new Error('Vertical EPUB did not persist under its own resource kind')
+  }
+  if (verticalPosition.key === advanced.key) {
+    throw new Error('Horizontal and vertical EPUB positions share the same storage key')
+  }
+
+  console.log('Reader smoke B: 《基地系列》 keeps BookPart positions isolated')
+  await openBookBySearch(page, '基地系列', /基地系列/)
+  const parts = page.locator('.part-item')
+  const partCount = await parts.count()
+  if (partCount < 2) throw new Error(`Foundation sample should be multi-part, got ${partCount}`)
+
+  await parts.nth(0).getByRole('link', { name: '阅读横式' }).click()
+  await waitReaderReady(page)
+  const foundationPartOne = await currentPosition(page)
+  await page.locator('.reader-toolbar--top a[aria-label="返回书籍"]').click()
+
+  await parts.nth(1).getByRole('link', { name: '阅读横式' }).click()
+  await waitReaderReady(page)
+  const foundationPartTwo = await currentPosition(page)
+  if (foundationPartOne.key === foundationPartTwo.key) {
+    throw new Error('Different Foundation BookParts share the same reading-position key')
+  }
+
+  console.log('Reader smoke C: 《老人與海》 long-text paging + runtime typography controls')
+  await openBookBySearch(page, '老人與海', /老人與海/)
+  await page.getByRole('link', { name: '阅读横式' }).click()
+  await waitReaderReady(page)
+  const oldManInitial = await currentPosition(page)
+
+  await page.getByRole('button', { name: '下一页' }).click()
+  await page.waitForFunction(
+    ({ key, value }) => localStorage.getItem(key) !== value,
+    oldManInitial,
     { timeout: 15_000 },
   )
 
-  const advancedValue = await page.evaluate((key) => localStorage.getItem(key), position.key)
-  if (!advancedValue) throw new Error('Reader position disappeared after paging')
+  await page.getByRole('button', { name: '排版' }).click()
+  const fontSize = page.locator('.reader-settings label').filter({ hasText: '字号' }).locator('input')
+  const lineHeight = page.locator('.reader-settings label').filter({ hasText: '行距' }).locator('input')
+  await fontSize.fill('120')
+  await lineHeight.fill('1.9')
+  await page.waitForTimeout(250)
 
-  console.log('Reader smoke: reopening and checking CFI restore')
-  await page.locator('.reader-toolbar--top a[aria-label="返回书籍"]').click()
-  await page.getByRole('link', { name: '阅读横式' }).click()
-  await page.waitForFunction(() => {
-    const button = [...document.querySelectorAll('button')].find((item) => item.textContent?.trim() === '下一页')
-    return button && !button.disabled
-  }, undefined, { timeout: 30_000 })
-  await page.waitForFunction(
-    () => document.querySelector('.reader-progress strong')?.textContent?.trim() !== '—',
-    undefined,
-    { timeout: 30_000 },
-  )
-
-  await new Promise((resolve) => setTimeout(resolve, 500))
-  const restoredValue = await page.evaluate((key) => localStorage.getItem(key), position.key)
-  if (restoredValue !== advancedValue) {
-    throw new Error('Reader did not restore the previously persisted CFI')
-  }
+  const activeNext = page.getByRole('button', { name: '下一页' })
+  if (await activeNext.isDisabled()) throw new Error('Reader became unavailable after typography changes')
+  await activeNext.click()
+  await page.waitForTimeout(150)
+  await currentPosition(page)
 
   if (browserErrors.length) {
     throw new Error(`Browser page errors: ${browserErrors.join(' | ')}`)
   }
 
-  console.log('Reader smoke test passed: search → open remote EPUB → page → persist CFI → restore CFI')
+  console.log(
+    'Reader smoke test passed: 3 real books, horizontal + vertical, multi-part isolation, paging, CFI restore, typography',
+  )
 } finally {
   await browser?.close()
   server.kill('SIGTERM')
