@@ -9,7 +9,7 @@
     "sync:classic": "tsx scripts/sync-classic.ts",
     "predev": "npm run patch:foliate && npm run sync:classic",
     "dev": "vite",
-    "prebuild": "npm run patch:foliate && npm run sync:classic",
+    "prebuild": "npm run patch:foliate && npm run test:blob-registry && npm run sync:classic",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint src scripts vite.config.ts",
