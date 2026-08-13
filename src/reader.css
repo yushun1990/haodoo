@@ -247,6 +247,8 @@ body.is-reading {
   right: max(12px, env(safe-area-inset-right));
   bottom: calc(78px + env(safe-area-inset-bottom));
   width: min(360px, calc(100vw - 24px));
+  max-height: min(640px, calc(100vh - 112px));
+  overflow-y: auto;
   padding: 16px;
   border-radius: 20px;
 }
@@ -269,6 +271,47 @@ body.is-reading {
 .reader-settings {
   display: grid;
   gap: 16px;
+}
+
+.reader-writing-mode {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.reader-writing-mode legend {
+  margin-bottom: 8px;
+  font-size: 0.78rem;
+}
+
+.reader-writing-mode__options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgb(47 79 67 / 7%);
+}
+
+.reader-writing-mode__options button {
+  min-height: 38px;
+  border-radius: 9px;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.reader-writing-mode__options button[aria-pressed="true"] {
+  background: var(--accent);
+  color: #fff;
+}
+
+.reader-writing-mode small {
+  display: block;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 0.66rem;
+  line-height: 1.5;
 }
 
 .reader-settings label {
