@@ -60,8 +60,8 @@ if (!source.includes(turnPagePatched)) {
 
 // Foliate still owns section semantics and pagination. Haodoo only replaces the
 // transport choice that gets a usable Document into Foliate's sandboxed iframe.
-// The application installs __HAODOO_SECTION_DOCUMENT_LOADER__ before importing
-// foliate-js. BlobTextRegistry remains the current HTML source until Phase D.
+// The application installs SectionDocumentLoader and BlobTextRegistry bridges before
+// importing foliate-js; the loader itself still receives rewritten HTML via getHtml().
 const loadMethodStart = '    async load(src, afterLoad, beforeRender) {'
 const renderMethodStart = '    render(layout) {'
 const loadStart = source.indexOf(loadMethodStart)
@@ -88,7 +88,7 @@ const iframeLoadMethod = `    async load(src, afterLoad, beforeRender) {
         const getSourceHtml = () => {
             if (sourceHtmlPromise) return sourceHtmlPromise
 
-            const registry = globalThis.__HAODOO_FOLIATE_BLOB_TEXT__
+            const registry = globalThis.__HAODOO_BLOB_TEXT_REGISTRY__
             const registered = registry?.get?.(src)
             if (typeof registered === 'string' && registered.trim()) {
                 sourceHtmlPromise = Promise.resolve(registered)
