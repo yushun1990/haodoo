@@ -36,6 +36,7 @@ type IdleWindow = Window & {
 const PROBE_TIMEOUT_MS = 4_000
 
 let cachedReport: Promise<BrowserCapabilityReport> | undefined
+let resolvedCapabilities: BrowserCapabilities | undefined
 let warmScheduled = false
 
 function errorText(error: unknown): string {
@@ -273,9 +274,17 @@ export function getBrowserCapabilityReport(
 
   const report = runBrowserCapabilityProbes()
   cachedReport = report
-  report.catch(() => {
-    if (cachedReport === report) cachedReport = undefined
-  })
+  report.then(
+    (result) => {
+      if (cachedReport === report) resolvedCapabilities = result.capabilities
+    },
+    () => {
+      if (cachedReport === report) {
+        cachedReport = undefined
+        resolvedCapabilities = undefined
+      }
+    },
+  )
   return report
 }
 
@@ -283,6 +292,10 @@ export async function getBrowserCapabilities(
   options: BrowserCapabilityOptions = {},
 ): Promise<BrowserCapabilities> {
   return (await getBrowserCapabilityReport(options)).capabilities
+}
+
+export function peekBrowserCapabilities(): BrowserCapabilities | undefined {
+  return resolvedCapabilities
 }
 
 export function warmBrowserCapabilities(): void {
