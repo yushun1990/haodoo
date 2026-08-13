@@ -1,10 +1,12 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
+import { InstallButton } from './pwa/InstallButton'
 import './styles.css'
 import './parts.css'
 import './reader.css'
 import './mobile.css'
+import './install.css'
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
@@ -16,6 +18,7 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
+    <InstallButton />
     <App />
   </StrictMode>,
 )
