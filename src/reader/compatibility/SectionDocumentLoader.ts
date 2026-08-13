@@ -101,7 +101,7 @@ function loadUrl(
       iframe.removeEventListener('load', onLoad)
       iframe.removeEventListener('error', onError)
     }
-    const finish = (callback: (value: Document | Error) => void, value: Document | Error) => {
+    const finish = <T extends Document | Error>(callback: (value: T) => void, value: T) => {
       if (settled) return
       settled = true
       cleanup()
