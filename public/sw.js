@@ -1,5 +1,13 @@
-const CACHE_NAME = 'haodoo-shell-v1'
-const APP_SHELL = ['./', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png']
+const CACHE_NAME = 'haodoo-shell-v2'
+const APP_SHELL = [
+  './',
+  './manifest.webmanifest',
+  './icon.svg',
+  './icon-192.png',
+  './icon-512.png',
+  './icon-maskable-192.png',
+  './icon-maskable-512.png',
+]
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
