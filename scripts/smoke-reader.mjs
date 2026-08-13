@@ -90,6 +90,28 @@ const currentPosition = async (page) => {
   return position
 }
 
+const currentWritingMode = async (page) =>
+  page.evaluate(() => {
+    const view = document.querySelector('.reader-engine-view')
+    const renderer = view?.renderer
+    const doc = renderer?.getContents?.()[0]?.doc
+    if (!doc?.body || !doc.defaultView) return null
+    return doc.defaultView.getComputedStyle(doc.body).writingMode
+  })
+
+const waitForWritingMode = async (page, expected) => {
+  await page.waitForFunction(
+    (mode) => {
+      const view = document.querySelector('.reader-engine-view')
+      const renderer = view?.renderer
+      const doc = renderer?.getContents?.()[0]?.doc
+      return Boolean(doc?.body && doc.defaultView?.getComputedStyle(doc.body).writingMode === mode)
+    },
+    expected,
+    { timeout: 30_000 },
+  )
+}
+
 let browser
 try {
   await waitForServer()
@@ -175,7 +197,7 @@ try {
   }
 
   stage = 'old-man-open'
-  console.log(`[${browserName}] Reader smoke C: 《老人與海》 long-text paging + runtime typography controls`)
+  console.log(`[${browserName}] Reader smoke C: 《老人與海》 CJK typography + runtime writing-mode reflow`)
   await openBookBySearch(page, '老人與海', /老人與海/)
   await page.getByRole('link', { name: '阅读横式' }).click()
   await waitReaderReady(page)
@@ -193,8 +215,10 @@ try {
   await page.getByRole('button', { name: '排版' }).click()
   const fontSize = page.locator('.reader-settings label').filter({ hasText: '字号' }).locator('input')
   const lineHeight = page.locator('.reader-settings label').filter({ hasText: '行距' }).locator('input')
+  const letterSpacing = page.locator('.reader-settings label').filter({ hasText: '字距' }).locator('input')
   await fontSize.fill('120')
   await lineHeight.fill('1.9')
+  await letterSpacing.fill('0.06')
   await page.waitForTimeout(250)
 
   const activeNext = page.getByRole('button', { name: '下一页' })
@@ -202,6 +226,39 @@ try {
   stage = 'old-man-after-typography-next'
   await activeNext.click()
   await page.waitForTimeout(150)
+  await currentPosition(page)
+
+  stage = 'old-man-force-vertical'
+  const beforeVertical = await currentPosition(page)
+  await page.getByRole('button', { name: '竖排' }).click()
+  await waitReaderReady(page)
+  await waitForWritingMode(page, 'vertical-rl')
+  const verticalMode = await currentWritingMode(page)
+  if (verticalMode !== 'vertical-rl') {
+    throw new Error(`Forced vertical mode did not reach the EPUB document: ${verticalMode}`)
+  }
+
+  const afterVerticalReflow = await currentPosition(page)
+  if (afterVerticalReflow.key !== beforeVertical.key) {
+    throw new Error('Writing-mode reflow changed the reading-position storage key')
+  }
+
+  stage = 'old-man-vertical-next'
+  await page.getByRole('button', { name: '下一页' }).click()
+  await page.waitForFunction(
+    ({ key, value }) => localStorage.getItem(key) !== value,
+    afterVerticalReflow,
+    { timeout: 15_000 },
+  )
+
+  stage = 'old-man-force-horizontal'
+  await page.getByRole('button', { name: '横排' }).click()
+  await waitReaderReady(page)
+  await waitForWritingMode(page, 'horizontal-tb')
+  const horizontalMode = await currentWritingMode(page)
+  if (horizontalMode !== 'horizontal-tb') {
+    throw new Error(`Forced horizontal mode did not reach the EPUB document: ${horizontalMode}`)
+  }
   await currentPosition(page)
 
   if (browserErrors.length) {
@@ -212,7 +269,7 @@ try {
   }
 
   console.log(
-    `[${browserName}] Reader smoke passed: 3 real books, horizontal + vertical, multi-part isolation, paging, CFI restore, typography`,
+    `[${browserName}] Reader smoke passed: 3 real books, CFI restore, multi-part isolation, CJK typography, horizontal + vertical reflow`,
   )
 } finally {
   await browser?.close()

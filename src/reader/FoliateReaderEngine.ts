@@ -152,9 +152,11 @@ function normalizeToc(items: FoliateTocItem[] | undefined): ReaderTocItem[] {
 export class FoliateReaderEngine implements ReaderEngine {
   #view?: FoliateViewElement
   #container?: HTMLElement
+  #source?: ReaderSource
   #toc: ReaderTocItem[] = []
   #listeners = new Set<(location: ReaderLocation) => void>()
   #preferences?: ReaderPreferences
+  #lastLocation?: ReaderLocation
 
   async open(
     container: HTMLElement,
@@ -163,7 +165,9 @@ export class FoliateReaderEngine implements ReaderEngine {
   ): Promise<void> {
     this.close()
     this.#container = container
+    this.#source = source
     this.#preferences = options.preferences
+    this.#lastLocation = options.location
 
     ensureFoliateBrowserCompatibility()
     await import('foliate-js/view.js')
@@ -202,6 +206,8 @@ export class FoliateReaderEngine implements ReaderEngine {
     this.#container?.replaceChildren()
     this.#view = undefined
     this.#container = undefined
+    this.#source = undefined
+    this.#lastLocation = undefined
     this.#toc = []
   }
 
@@ -221,8 +227,23 @@ export class FoliateReaderEngine implements ReaderEngine {
     return this.#toc
   }
 
-  setPreferences(preferences: ReaderPreferences): void {
+  async setPreferences(preferences: ReaderPreferences): Promise<void> {
+    const previousWritingMode = this.#preferences?.writingMode
+    const container = this.#container
+    const source = this.#source
+    const location = this.#lastLocation
+    const shouldReopen =
+      previousWritingMode !== undefined &&
+      previousWritingMode !== preferences.writingMode &&
+      Boolean(this.#view && container && source)
+
     this.#preferences = preferences
+
+    if (shouldReopen && container && source) {
+      await this.open(container, source, { location, preferences })
+      return
+    }
+
     this.#applyPreferences()
   }
 
@@ -244,6 +265,7 @@ export class FoliateReaderEngine implements ReaderEngine {
       fraction: typeof fraction === 'number' ? fraction : undefined,
       chapter: tocItem?.label?.trim() || undefined,
     }
+    this.#lastLocation = location
     for (const listener of this.#listeners) listener(location)
   }
 
@@ -265,7 +287,7 @@ export class FoliateReaderEngine implements ReaderEngine {
 
   #applyDocumentPreferences(doc: Document): void {
     const preferences = this.#preferences
-    if (!preferences) return
+    if (!preferences || !doc.head) return
 
     let style = doc.querySelector<HTMLStyleElement>('style[data-haodoo-reader]')
     if (!style) {
@@ -274,13 +296,24 @@ export class FoliateReaderEngine implements ReaderEngine {
       doc.head.append(style)
     }
 
+    const writingMode =
+      preferences.writingMode === 'vertical'
+        ? 'writing-mode: vertical-rl !important; text-orientation: mixed !important;'
+        : preferences.writingMode === 'horizontal'
+          ? 'writing-mode: horizontal-tb !important; text-orientation: mixed !important;'
+          : ''
+
     style.textContent = `
       html, body {
         text-rendering: optimizeLegibility;
+        line-break: strict !important;
+        word-break: normal !important;
       }
       body {
         font-size: ${preferences.fontScale}% !important;
         line-height: ${preferences.lineHeight} !important;
+        letter-spacing: ${preferences.letterSpacing}em !important;
+        ${writingMode}
       }
       img, svg, video {
         max-width: 100% !important;

@@ -7,6 +7,7 @@ import {
   type ReaderPreferences,
   type ReaderResourceKind,
   type ReaderTocItem,
+  type ReaderWritingMode,
 } from './ReaderEngine'
 import {
   loadReadingPosition,
@@ -19,6 +20,12 @@ interface ReaderPageProps {
   part: BookPart
   resourceKind: ReaderResourceKind
 }
+
+const WRITING_MODE_OPTIONS: Array<{ value: ReaderWritingMode; label: string }> = [
+  { value: 'source', label: '原书' },
+  { value: 'horizontal', label: '横排' },
+  { value: 'vertical', label: '竖排' },
+]
 
 function TocTree({
   items,
@@ -54,6 +61,22 @@ function ReaderSettings({
 
   return (
     <div className="reader-settings">
+      <fieldset className="reader-writing-mode">
+        <legend>版式</legend>
+        <div className="reader-writing-mode__options">
+          {WRITING_MODE_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              aria-pressed={preferences.writingMode === option.value}
+              onClick={() => update('writingMode', option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        <small>原书保留 EPUB 自带方向；横排 / 竖排切换会重新分页并恢复当前位置。</small>
+      </fieldset>
       <label>
         <span>字号</span>
         <strong>{preferences.fontScale}%</strong>
@@ -76,6 +99,18 @@ function ReaderSettings({
           step="0.1"
           value={preferences.lineHeight}
           onChange={(event) => update('lineHeight', Number(event.target.value))}
+        />
+      </label>
+      <label>
+        <span>字距</span>
+        <strong>{preferences.letterSpacing.toFixed(2)}em</strong>
+        <input
+          type="range"
+          min="0"
+          max="0.12"
+          step="0.01"
+          value={preferences.letterSpacing}
+          onChange={(event) => update('letterSpacing', Number(event.target.value))}
         />
       </label>
       <label>
@@ -102,6 +137,7 @@ export function ReaderPage({ book, part, resourceKind }: ReaderPageProps) {
   const [toc, setToc] = useState<ReaderTocItem[]>([])
   const [location, setLocation] = useState<ReaderLocation>()
   const [preferences, setPreferences] = useState(DEFAULT_READER_PREFERENCES)
+  const appliedWritingModeRef = useRef<ReaderWritingMode>(preferences.writingMode)
   const [tocOpen, setTocOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [chromeVisible, setChromeVisible] = useState(true)
@@ -155,6 +191,7 @@ export function ReaderPage({ book, part, resourceKind }: ReaderPageProps) {
         )
 
         if (!active) return
+        appliedWritingModeRef.current = preferences.writingMode
         setToc(engine.getToc())
         setStatus('ready')
       } catch (reason: unknown) {
@@ -176,7 +213,31 @@ export function ReaderPage({ book, part, resourceKind }: ReaderPageProps) {
   }, [book.id, part.id, positionKey, resource, resourceKind])
 
   useEffect(() => {
-    engineRef.current?.setPreferences(preferences)
+    const engine = engineRef.current
+    if (!engine) return
+
+    let active = true
+    const writingModeChanged = appliedWritingModeRef.current !== preferences.writingMode
+
+    const apply = async () => {
+      try {
+        if (writingModeChanged) setStatus('loading')
+        await engine.setPreferences(preferences)
+        if (!active) return
+        appliedWritingModeRef.current = preferences.writingMode
+        if (writingModeChanged) setStatus('ready')
+      } catch (reason: unknown) {
+        if (!active) return
+        const message = reason instanceof Error ? reason.message : String(reason)
+        setError(`无法应用排版设置：${message}`)
+        setStatus('error')
+      }
+    }
+
+    void apply()
+    return () => {
+      active = false
+    }
   }, [preferences])
 
   useEffect(() => {
@@ -206,6 +267,14 @@ export function ReaderPage({ book, part, resourceKind }: ReaderPageProps) {
     typeof location?.fraction === 'number'
       ? `${Math.max(0, Math.min(100, location.fraction * 100)).toFixed(1)}%`
       : undefined
+  const layoutLabel =
+    preferences.writingMode === 'vertical'
+      ? '竖排'
+      : preferences.writingMode === 'horizontal'
+        ? '横排'
+        : resourceKind === 'verticalEpub'
+          ? '原书直式'
+          : '原书横式'
 
   return (
     <main className={`reader-shell ${chromeVisible ? '' : 'reader-shell--clean'}`}>
@@ -260,7 +329,7 @@ export function ReaderPage({ book, part, resourceKind }: ReaderPageProps) {
         </button>
         <div className="reader-progress" title={location?.chapter}>
           <strong>{progress ?? '—'}</strong>
-          <span>{location?.chapter ?? (resourceKind === 'verticalEpub' ? '直式 EPUB' : '横式 EPUB')}</span>
+          <span>{location?.chapter ?? layoutLabel}</span>
         </div>
         <button type="button" onClick={() => setSettingsOpen((value) => !value)} disabled={status !== 'ready'}>
           排版
@@ -284,13 +353,13 @@ export function ReaderPage({ book, part, resourceKind }: ReaderPageProps) {
       {settingsOpen && chromeVisible && (
         <aside className="reader-panel reader-panel--settings" aria-label="阅读排版设置">
           <div className="reader-panel__head">
-            <strong>基础排版</strong>
+            <strong>中文排版</strong>
             <button type="button" onClick={() => setSettingsOpen(false)} aria-label="关闭排版设置">
               ×
             </button>
           </div>
           <ReaderSettings preferences={preferences} onChange={setPreferences} />
-          <p>P2 只提供基线设置；字体、主题、中文横竖排专项在 P3 处理。</p>
+          <p>P3 首轮先验证横排 / 竖排分页边界；字体、主题和简繁显示继续分批接入。</p>
         </aside>
       )}
 
