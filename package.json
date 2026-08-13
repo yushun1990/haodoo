@@ -16,6 +16,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "preview": "vite preview",
+    "test:blob-registry": "tsx scripts/test-blob-text-registry.ts",
     "test:reader-smoke": "node scripts/smoke-reader.mjs"
   },
   "dependencies": {
