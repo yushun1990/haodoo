@@ -91,6 +91,34 @@ function ensureFoliateBrowserCompatibility(): void {
       configurable: true,
     })
   }
+
+  const mapConstructor = Map as typeof Map & {
+    groupBy?: <T, K>(
+      items: Iterable<T>,
+      callback: (item: T, index: number) => K,
+    ) => Map<K, T[]>
+  }
+
+  if (typeof mapConstructor.groupBy !== 'function') {
+    Object.defineProperty(Map, 'groupBy', {
+      value<T, K>(items: Iterable<T>, callback: (item: T, index: number) => K): Map<K, T[]> {
+        if (items == null) throw new TypeError('Map.groupBy requires an iterable')
+        if (typeof callback !== 'function') throw new TypeError('Map.groupBy callback must be a function')
+
+        const groups = new Map<K, T[]>()
+        let index = 0
+        for (const item of items) {
+          const key = callback(item, index++)
+          const current = groups.get(key)
+          if (current) current.push(item)
+          else groups.set(key, [item])
+        }
+        return groups
+      },
+      writable: true,
+      configurable: true,
+    })
+  }
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
