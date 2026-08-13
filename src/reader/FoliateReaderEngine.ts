@@ -6,6 +6,7 @@ import type {
   ReaderSource,
   ReaderTocItem,
 } from './ReaderEngine'
+import { installBlobTextRegistry } from './compatibility/BlobTextRegistry'
 import { warmBrowserCapabilities } from './compatibility/BrowserCapabilities'
 import { installSectionDocumentLoader } from './compatibility/SectionDocumentLoader'
 
@@ -172,6 +173,7 @@ export class FoliateReaderEngine implements ReaderEngine {
     this.#lastLocation = options.location
 
     ensureFoliateBrowserCompatibility()
+    installBlobTextRegistry()
     installSectionDocumentLoader()
     await import('foliate-js/view.js')
 
