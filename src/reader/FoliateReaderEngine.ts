@@ -7,6 +7,7 @@ import type {
   ReaderTocItem,
 } from './ReaderEngine'
 import { warmBrowserCapabilities } from './compatibility/BrowserCapabilities'
+import { installSectionDocumentLoader } from './compatibility/SectionDocumentLoader'
 
 interface FoliateTocItem {
   label?: string
@@ -171,6 +172,7 @@ export class FoliateReaderEngine implements ReaderEngine {
     this.#lastLocation = options.location
 
     ensureFoliateBrowserCompatibility()
+    installSectionDocumentLoader()
     await import('foliate-js/view.js')
 
     const view = document.createElement('foliate-view') as FoliateViewElement
@@ -196,8 +198,6 @@ export class FoliateReaderEngine implements ReaderEngine {
       'EPUB 已载入，但分页初始化超过 15 秒。当前移动浏览器可能与 Foliate 阅读引擎不兼容。',
     )
 
-    // Phase B only warms and caches the shared runtime facts after the Reader is usable.
-    // SectionDocumentLoader will consume them for transport selection in the next phase.
     warmBrowserCapabilities()
   }
 
