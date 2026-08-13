@@ -45,6 +45,7 @@ type SectionDocumentLoaderGlobal = typeof globalThis & {
 }
 
 const UNKNOWN_BLOB_TIMEOUT_MS = 900
+const KNOWN_BLOB_TIMEOUT_MS = 1_500
 const URL_TIMEOUT_MS = 8_000
 const FALLBACK_TIMEOUT_MS = 1_500
 const POLL_INTERVAL_MS = 25
@@ -66,7 +67,6 @@ async function waitForUsableDocument(
   iframe: HTMLIFrameElement,
   timeoutMs: number,
   label: string,
-  options: { rejectEmptyNonBlank?: boolean } = {},
 ): Promise<Document> {
   const deadline = Date.now() + timeoutMs
   let lastUrl = ''
@@ -76,37 +76,89 @@ async function waitForUsableDocument(
       const doc = iframe.contentDocument
       lastUrl = doc?.URL ?? ''
       if (hasUsableContent(doc)) return doc
-      if (
-        options.rejectEmptyNonBlank &&
-        doc?.body &&
-        lastUrl &&
-        lastUrl !== 'about:blank'
-      ) {
-        throw new Error(`${label} produced an empty document: ${lastUrl}`)
-      }
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('produced an empty document')) throw error
+    } catch {
+      // Keep polling until the explicit transport timeout.
     }
     await new Promise((resolve) => window.setTimeout(resolve, POLL_INTERVAL_MS))
   }
 
-  throw new Error(`${label} did not produce usable iframe content within ${timeoutMs}ms (last URL: ${lastUrl || 'unavailable'})`)
+  throw new Error(
+    `${label} did not produce usable iframe content within ${timeoutMs}ms (last URL: ${lastUrl || 'unavailable'})`,
+  )
 }
 
-async function loadUrl(
+function loadUrl(
   iframe: HTMLIFrameElement,
   source: string,
   timeoutMs: number,
   label: string,
 ): Promise<Document> {
-  iframe.removeAttribute('srcdoc')
-  iframe.src = source
-  return waitForUsableDocument(iframe, timeoutMs, label, { rejectEmptyNonBlank: true })
+  return new Promise<Document>((resolve, reject) => {
+    let settled = false
+
+    const cleanup = () => {
+      window.clearTimeout(timeoutId)
+      iframe.removeEventListener('load', onLoad)
+      iframe.removeEventListener('error', onError)
+    }
+    const finish = (callback: (value: Document | Error) => void, value: Document | Error) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      callback(value)
+    }
+    const onLoad = () => {
+      let doc: Document | null
+      try {
+        doc = iframe.contentDocument
+      } catch (error) {
+        finish(reject, error instanceof Error ? error : new Error(String(error)))
+        return
+      }
+
+      const documentUrl = doc?.URL ?? ''
+      // Embedded WebViews may deliver the iframe's delayed initial about:blank
+      // load after navigation has already been assigned. Ignore it and let the
+      // real navigation event or timeout decide the transport.
+      if (source !== 'about:blank' && (!documentUrl || documentUrl === 'about:blank')) return
+
+      if (!hasUsableContent(doc)) {
+        finish(reject, new Error(`${label} loaded an empty document: ${documentUrl || 'unavailable'}`))
+        return
+      }
+      finish(resolve, doc)
+    }
+    const onError = () => {
+      finish(reject, new Error(`${label} emitted an iframe error event`))
+    }
+    const timeoutId = window.setTimeout(() => {
+      let lastUrl = ''
+      try {
+        lastUrl = iframe.contentDocument?.URL ?? ''
+      } catch {
+        // The failure detail below is still useful without URL access.
+      }
+      finish(
+        reject,
+        new Error(
+          `${label} did not produce usable iframe content within ${timeoutMs}ms (last URL: ${lastUrl || 'unavailable'})`,
+        ),
+      )
+    }, timeoutMs)
+
+    iframe.addEventListener('load', onLoad)
+    iframe.addEventListener('error', onError)
+    iframe.removeAttribute('srcdoc')
+    iframe.src = source
+  })
 }
 
 async function loadSrcdoc(iframe: HTMLIFrameElement, html: string): Promise<Document> {
   iframe.removeAttribute('src')
   iframe.srcdoc = html
+  // srcdoc is reliable on target WebViews but its load event is not; inspect the
+  // resulting document after a short navigation turn instead of depending on it.
+  await new Promise((resolve) => window.setTimeout(resolve, 50))
   return waitForUsableDocument(iframe, FALLBACK_TIMEOUT_MS, 'srcdoc transport')
 }
 
@@ -183,13 +235,16 @@ export async function loadSectionDocument(
       const document = await loadUrl(
         iframe,
         source,
-        capabilities ? URL_TIMEOUT_MS : UNKNOWN_BLOB_TIMEOUT_MS,
+        capabilities ? KNOWN_BLOB_TIMEOUT_MS : UNKNOWN_BLOB_TIMEOUT_MS,
         'blob iframe transport',
       )
       const result = {
         document,
         transport: 'blob' as const,
-        attempts: [...attempts, { transport: 'blob' as const, outcome: 'success' as const, detail: source }],
+        attempts: [
+          ...attempts,
+          { transport: 'blob' as const, outcome: 'success' as const, detail: source },
+        ],
       }
       lastResult = result
       return result
@@ -221,7 +276,14 @@ export async function loadSectionDocument(
       const result = {
         document,
         transport: 'srcdoc' as const,
-        attempts: [...attempts, { transport: 'srcdoc' as const, outcome: 'success' as const, detail: 'rewritten HTML injected' }],
+        attempts: [
+          ...attempts,
+          {
+            transport: 'srcdoc' as const,
+            outcome: 'success' as const,
+            detail: 'rewritten HTML injected',
+          },
+        ],
       }
       lastResult = result
       return result
