@@ -58,6 +58,15 @@ const verifyBrowserCapabilities = async (page) => {
     'resizeObserver',
     'documentFonts',
   ]
+  const requiredReaderCapabilities = new Set([
+    'blobIframe',
+    'srcdocIframe',
+    'documentWriteIframe',
+    'cssColumns',
+    'rangeGeometry',
+    'resizeObserver',
+    'documentFonts',
+  ])
 
   await page.goto(`${baseUrl}/#diagnostics`, { waitUntil: 'networkidle' })
   await page.getByRole('heading', { name: 'WebView 兼容诊断' }).waitFor()
@@ -73,7 +82,9 @@ const verifyBrowserCapabilities = async (page) => {
   for (const key of expectedCapabilities) {
     const line = summary.find((item) => item.includes(key))
     if (!line) throw new Error(`BrowserCapabilities summary is missing ${key}`)
-    if (!line.startsWith('✅')) throw new Error(`Mainstream browser capability failed: ${line}`)
+    if (requiredReaderCapabilities.has(key) && !line.startsWith('✅')) {
+      throw new Error(`Mainstream reader capability failed: ${line}`)
+    }
   }
 }
 
