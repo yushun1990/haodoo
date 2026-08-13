@@ -16,11 +16,48 @@ type NavigatorWithStandalone = Navigator & {
 
 type InstallGuideKind = 'ios' | 'firefox-android' | 'android' | 'generic'
 
+const INSTALL_MARKER_KEY = 'haodoo:pwa-installed'
+
 function isStandalone(): boolean {
   return (
     window.matchMedia('(display-mode: standalone)').matches ||
     (navigator as NavigatorWithStandalone).standalone === true
   )
+}
+
+function hasInstallMarker(): boolean {
+  try {
+    return window.localStorage.getItem(INSTALL_MARKER_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function setInstallMarker(installed: boolean): void {
+  try {
+    if (installed) window.localStorage.setItem(INSTALL_MARKER_KEY, '1')
+    else window.localStorage.removeItem(INSTALL_MARKER_KEY)
+  } catch {
+    // Storage can be unavailable in private or embedded browsing contexts.
+  }
+}
+
+function isIOS(): boolean {
+  const ua = navigator.userAgent
+  return (
+    /iPad|iPhone|iPod/i.test(ua) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  )
+}
+
+function expectsBeforeInstallPrompt(): boolean {
+  const ua = navigator.userAgent
+
+  if (isIOS()) return false
+  if (/Firefox/i.test(ua)) return false
+  if (/\bwv\b/i.test(ua)) return false
+
+  return /Chrome|Chromium|Edg|OPR|SamsungBrowser/i.test(ua)
 }
 
 function isCatalogRoute(): boolean {
@@ -29,11 +66,8 @@ function isCatalogRoute(): boolean {
 
 function installGuideKind(): InstallGuideKind {
   const ua = navigator.userAgent
-  const isIOS =
-    /iPad|iPhone|iPod/i.test(ua) ||
-    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
 
-  if (isIOS) return 'ios'
+  if (isIOS()) return 'ios'
   if (/Android/i.test(ua) && /Firefox/i.test(ua)) return 'firefox-android'
   if (/Android/i.test(ua)) return 'android'
   return 'generic'
@@ -98,32 +132,50 @@ function InstallGuide({ kind, onClose }: { kind: InstallGuideKind; onClose: () =
 
 export function InstallButton() {
   const [promptEvent, setPromptEvent] = useState<BeforeInstallPromptEvent>()
-  const [installed, setInstalled] = useState(isStandalone)
+  const [installed, setInstalled] = useState(() => isStandalone() || hasInstallMarker())
   const [onCatalog, setOnCatalog] = useState(isCatalogRoute)
   const [guideOpen, setGuideOpen] = useState(false)
+  const nativePromptExpected = expectsBeforeInstallPrompt()
 
   useEffect(() => {
-    const onBeforeInstallPrompt = (event: Event) => {
-      event.preventDefault()
-      setPromptEvent(event as BeforeInstallPromptEvent)
-    }
+    const displayMode = window.matchMedia('(display-mode: standalone)')
 
-    const onAppInstalled = () => {
+    const markInstalled = () => {
+      setInstallMarker(true)
       setInstalled(true)
       setPromptEvent(undefined)
       setGuideOpen(false)
     }
 
+    const onBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault()
+
+      // Chrome only emits this while the app is installable. If it reappears after
+      // a previous installation, the user has most likely uninstalled the PWA, so
+      // discard the persisted marker and make the install action available again.
+      setInstallMarker(false)
+      setInstalled(false)
+      setPromptEvent(event as BeforeInstallPromptEvent)
+    }
+
+    const onAppInstalled = () => markInstalled()
     const onHashChange = () => setOnCatalog(isCatalogRoute())
+    const onDisplayModeChange = () => {
+      if (isStandalone()) markInstalled()
+    }
+
+    if (isStandalone()) markInstalled()
 
     window.addEventListener('beforeinstallprompt', onBeforeInstallPrompt)
     window.addEventListener('appinstalled', onAppInstalled)
     window.addEventListener('hashchange', onHashChange)
+    displayMode.addEventListener('change', onDisplayModeChange)
 
     return () => {
       window.removeEventListener('beforeinstallprompt', onBeforeInstallPrompt)
       window.removeEventListener('appinstalled', onAppInstalled)
       window.removeEventListener('hashchange', onHashChange)
+      displayMode.removeEventListener('change', onDisplayModeChange)
     }
   }, [])
 
@@ -138,13 +190,17 @@ export function InstallButton() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [guideOpen])
 
-  if (installed || !onCatalog) return null
+  // Chromium browsers that support beforeinstallprompt should only show the button
+  // while a real install prompt is available. After installation Chrome stops
+  // emitting the event, which also covers already-installed users who do not yet
+  // have Haodoo's local marker from an earlier version.
+  if (installed || !onCatalog || (nativePromptExpected && !promptEvent)) return null
 
   const install = async () => {
     const currentPrompt = promptEvent
 
     if (!currentPrompt) {
-      setGuideOpen(true)
+      if (!nativePromptExpected) setGuideOpen(true)
       return
     }
 
@@ -154,13 +210,12 @@ export function InstallButton() {
       await currentPrompt.prompt()
       const choice = await currentPrompt.userChoice
       if (choice.outcome === 'accepted') {
+        setInstallMarker(true)
         setInstalled(true)
-      } else {
-        setGuideOpen(true)
+        setGuideOpen(false)
       }
     } catch (error) {
       console.warn('PWA install prompt failed', error)
-      setGuideOpen(true)
     }
   }
 
