@@ -1,7 +1,8 @@
-const CACHE_NAME = 'haodoo-shell-v2'
+const CACHE_NAME = 'haodoo-shell-v3'
 const APP_SHELL = [
   './',
   './manifest.webmanifest',
+  './legacy-webview.js?v=1',
   './icon.svg',
   './icon-192.png',
   './icon-512.png',
