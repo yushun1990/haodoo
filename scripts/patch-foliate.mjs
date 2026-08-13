@@ -58,9 +58,10 @@ if (!source.includes(turnPagePatched)) {
   applied.push('Paginator navigation lock finally guard')
 }
 
-// Replace the complete section iframe loader by method boundaries instead of an exact
-// multi-line source match. This keeps the patch idempotent and repairs partially
-// patched local node_modules trees.
+// Foliate still owns section semantics and pagination. Haodoo only replaces the
+// transport choice that gets a usable Document into Foliate's sandboxed iframe.
+// The application installs __HAODOO_SECTION_DOCUMENT_LOADER__ before importing
+// foliate-js. BlobTextRegistry remains the current HTML source until Phase D.
 const loadMethodStart = '    async load(src, afterLoad, beforeRender) {'
 const renderMethodStart = '    render(layout) {'
 const loadStart = source.indexOf(loadMethodStart)
@@ -74,37 +75,64 @@ if (loadStart < 0 || renderStart < 0 || renderStart <= loadStart) {
 
 const iframeLoadMethod = `    async load(src, afterLoad, beforeRender) {
         if (typeof src !== 'string') throw new Error(\`${'${src}'} is not string\`)
-        return new Promise((resolve, reject) => {
-            let settled = false
-            let fallbackStarted = false
-            let sourceHtmlPromise
 
-            const cleanup = () => {
-                clearTimeout(timeout)
-                clearTimeout(fallbackTimer)
-                this.#iframe.removeEventListener('load', onLoad)
-                this.#iframe.removeEventListener('error', onError)
+        const loader = globalThis.__HAODOO_SECTION_DOCUMENT_LOADER__
+        if (!loader?.load) {
+            const error = new Error('Haodoo SectionDocumentLoader is not installed')
+            error.name = 'SectionDocumentTransportError'
+            error.haodooReaderFailureKind = 'transport'
+            throw error
+        }
+
+        let sourceHtmlPromise
+        const getSourceHtml = () => {
+            if (sourceHtmlPromise) return sourceHtmlPromise
+
+            const registry = globalThis.__HAODOO_FOLIATE_BLOB_TEXT__
+            const registered = registry?.get?.(src)
+            if (typeof registered === 'string' && registered.trim()) {
+                sourceHtmlPromise = Promise.resolve(registered)
+                return sourceHtmlPromise
             }
-            const finish = (callback, value) => {
-                if (settled) return
-                settled = true
-                cleanup()
-                callback(value)
-            }
-            const hasContent = doc => {
-                const body = doc?.body
-                if (!body) return false
-                if (body.textContent?.trim()) return true
-                return Boolean(body.querySelector('img, svg, video, canvas, math, object'))
-            }
-            const renderDocument = doc => {
-                if (!doc?.documentElement || !doc.body) {
-                    throw new Error('Foliate section iframe has no usable document/body')
+
+            sourceHtmlPromise = fetch(src).then(async response => {
+                if (!response.ok) {
+                    throw new Error(\`Foliate section blob fetch failed: ${'${response.status}'} ${'${response.statusText}'}\`)
                 }
+                const html = await response.text()
+                if (!html.trim()) throw new Error('Foliate section blob resolved to an empty document')
+                return html
+            })
+            return sourceHtmlPromise
+        }
 
+        const stageError = (kind, error) => {
+            if (error?.haodooReaderFailureKind) return error
+            if (error?.kind === 'transport') {
+                error.haodooReaderFailureKind = 'transport'
+                return error
+            }
+            const message = error instanceof Error ? error.message : String(error)
+            const wrapped = new Error(\`Foliate section ${'${kind}'} failed: ${'${message}'}\`, { cause: error })
+            wrapped.name = kind === 'pagination'
+                ? 'SectionPaginationError'
+                : kind === 'render'
+                    ? 'SectionRenderError'
+                    : 'SectionDocumentTransportError'
+            wrapped.haodooReaderFailureKind = kind
+            return wrapped
+        }
+
+        const renderDocument = doc => {
+            if (!doc?.documentElement || !doc.body) {
+                throw stageError('render', new Error('Foliate section iframe has no usable document/body'))
+            }
+
+            let layout
+            try {
                 afterLoad?.(doc)
 
-                // it needs to be visible for Firefox to get computed style
+                // It needs to be visible for Firefox to get computed style.
                 this.#iframe.style.display = 'block'
                 const { vertical, rtl } = getDirection(doc)
                 const background = getBackground(doc)
@@ -114,126 +142,40 @@ const iframeLoadMethod = `    async load(src, afterLoad, beforeRender) {
                 this.#rtl = rtl
 
                 this.#contentRange.selectNodeContents(doc.body)
-                const layout = beforeRender?.({ vertical, rtl, background })
+                layout = beforeRender?.({ vertical, rtl, background })
+            } catch (error) {
+                throw stageError('render', error)
+            }
+
+            try {
                 this.#iframe.style.display = 'block'
                 this.render(layout)
                 this.#observer.observe(doc.body)
-
-                // Some embedded WebViews do not expose document.fonts.
                 doc.fonts?.ready?.then(() => this.expand())
-
-                finish(resolve)
+            } catch (error) {
+                throw stageError('pagination', error)
             }
-            const getSourceHtml = () => {
-                if (sourceHtmlPromise) return sourceHtmlPromise
+        }
 
-                const registry = globalThis.__HAODOO_FOLIATE_BLOB_TEXT__
-                const registered = registry?.get?.(src)
-                if (typeof registered === 'string' && registered.trim()) {
-                    sourceHtmlPromise = Promise.resolve(registered)
-                    return sourceHtmlPromise
-                }
+        let loaded
+        try {
+            loaded = await loader.load({
+                iframe: this.#iframe,
+                source: src,
+                getHtml: getSourceHtml,
+            })
+        } catch (error) {
+            throw stageError('transport', error)
+        }
 
-                sourceHtmlPromise = fetch(src).then(async response => {
-                    if (!response.ok) {
-                        throw new Error(\`Foliate section blob fetch failed: ${'${response.status}'} ${'${response.statusText}'}\`)
-                    }
-                    const html = await response.text()
-                    if (!html.trim()) throw new Error('Foliate section blob resolved to an empty document')
-                    return html
-                })
-                return sourceHtmlPromise
-            }
-            const writeFallback = async () => {
-                if (settled || fallbackStarted || !src.startsWith('blob:')) return
-                fallbackStarted = true
-                try {
-                    const html = await getSourceHtml()
-                    if (settled) return
-
-                    // Cancel the unreliable blob navigation first. srcdoc is enough on most
-                    // WebViews; if it still exposes an empty document, write the already-
-                    // rewritten Foliate XHTML directly into the same sandboxed iframe.
-                    this.#iframe.removeAttribute('src')
-                    this.#iframe.srcdoc = html
-                    await wait(80)
-
-                    let doc = this.document
-                    if (!hasContent(doc)) {
-                        doc = this.document
-                        if (!doc) throw new Error('Foliate iframe document is unavailable for direct-write fallback')
-                        doc.open()
-                        doc.write(html)
-                        doc.close()
-                        await wait(0)
-                        doc = this.document
-                    }
-
-                    if (!hasContent(doc)) {
-                        throw new Error('Foliate section HTML was recovered, but WebView produced an empty iframe document')
-                    }
-                    renderDocument(doc)
-                } catch (error) {
-                    finish(
-                        reject,
-                        error instanceof Error
-                            ? error
-                            : new Error(\`Foliate direct-write fallback failed: ${'${String(error)}'}\`),
-                    )
-                }
-            }
-            const onError = () => {
-                void writeFallback()
-            }
-            const onLoad = () => {
-                if (settled || fallbackStarted) return
-                const doc = this.document
-                const documentURL = doc?.URL ?? ''
-
-                // Android WebViews can deliver the iframe's delayed initial about:blank
-                // load after Foliate has already assigned the blob section URL.
-                if (src.startsWith('blob:') && (!documentURL || documentURL === 'about:blank')) {
-                    void writeFallback()
-                    return
-                }
-
-                // A more subtle WebView failure reports the blob navigation as loaded but
-                // leaves body empty. Do not let that empty document satisfy View.load().
-                if (src.startsWith('blob:') && !hasContent(doc)) {
-                    void writeFallback()
-                    return
-                }
-
-                try {
-                    renderDocument(doc)
-                } catch (error) {
-                    finish(reject, error instanceof Error ? error : new Error(String(error)))
-                }
-            }
-
-            // Normal browsers load the blob section immediately. If an embedded WebView
-            // does not, bypass navigation and inject Foliate's rewritten section directly.
-            const fallbackTimer = setTimeout(() => void writeFallback(), 900)
-
-            const timeout = setTimeout(() => {
-                const kind = src.startsWith('blob:') ? 'blob URL/direct-write fallback' : src
-                finish(
-                    reject,
-                    new Error(\`Foliate section iframe did not load usable content within 8 seconds (${'${kind}'})\`),
-                )
-            }, 8000)
-
-            this.#iframe.addEventListener('load', onLoad)
-            this.#iframe.addEventListener('error', onError)
-            this.#iframe.src = src
-        })
+        renderDocument(loaded.document)
     }
 `
 
 const currentLoadMethod = source.slice(loadStart, renderStart)
 if (currentLoadMethod !== iframeLoadMethod) {
   source = source.slice(0, loadStart) + iframeLoadMethod + source.slice(renderStart)
-  applied.push('View iframe direct-write compatibility')
+  applied.push('View SectionDocumentLoader bridge')
 }
 
 await writeFile(target, source, 'utf8')
