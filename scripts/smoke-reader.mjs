@@ -47,6 +47,47 @@ const openCatalog = async (page) => {
   await page.goto(baseUrl, { waitUntil: 'networkidle' })
 }
 
+const verifyBrowserCapabilities = async (page) => {
+  const expectedCapabilities = [
+    'blobFetch',
+    'blobIframe',
+    'srcdocIframe',
+    'documentWriteIframe',
+    'cssColumns',
+    'rangeGeometry',
+    'resizeObserver',
+    'documentFonts',
+  ]
+  const requiredReaderCapabilities = new Set([
+    'blobIframe',
+    'srcdocIframe',
+    'documentWriteIframe',
+    'cssColumns',
+    'rangeGeometry',
+    'resizeObserver',
+    'documentFonts',
+  ])
+
+  await page.goto(`${baseUrl}/#diagnostics`, { waitUntil: 'networkidle' })
+  await page.getByRole('heading', { name: 'WebView 兼容诊断' }).waitFor()
+  await page.waitForFunction(
+    (expectedCount) => document.querySelectorAll('[aria-label="Reader capability summary"] strong').length === expectedCount,
+    expectedCapabilities.length,
+    { timeout: 30_000 },
+  )
+
+  const summary = await page
+    .locator('[aria-label="Reader capability summary"] strong')
+    .allTextContents()
+  for (const key of expectedCapabilities) {
+    const line = summary.find((item) => item.includes(key))
+    if (!line) throw new Error(`BrowserCapabilities summary is missing ${key}`)
+    if (requiredReaderCapabilities.has(key) && !line.startsWith('✅')) {
+      throw new Error(`Mainstream reader capability failed: ${line}`)
+    }
+  }
+}
+
 const openBookBySearch = async (page, query, titlePattern) => {
   await openCatalog(page)
   await page.getByPlaceholder('搜索书名、作者或系列').fill(query)
@@ -141,6 +182,10 @@ try {
   page.on('pageerror', (error) => {
     browserErrors.push({ stage, message: error.message, stack: error.stack })
   })
+
+  stage = 'browser-capabilities'
+  console.log(`[${browserName}] Compatibility smoke: shared BrowserCapabilities probes`)
+  await verifyBrowserCapabilities(page)
 
   stage = 'little-prince-horizontal-open'
   console.log(`[${browserName}] Reader smoke A: 《【小王子】》 horizontal open → page → CFI restore`)
@@ -275,7 +320,7 @@ try {
   }
 
   console.log(
-    `[${browserName}] Reader smoke passed: 3 real books, CFI restore, multi-part isolation, CJK typography, horizontal + vertical reflow`,
+    `[${browserName}] Reader smoke passed: shared capabilities, 3 real books, CFI restore, multi-part isolation, CJK typography, horizontal + vertical reflow`,
   )
 } finally {
   await browser?.close()

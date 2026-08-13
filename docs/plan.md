@@ -4,65 +4,85 @@
 >
 > 这是新会话判断“下一步做什么”的权威入口。长期产品设计见 [`design.md`](design.md)，Reader / WebView 兼容架构细节见 [`reader-compatibility-roadmap.md`](reader-compatibility-roadmap.md)。
 
-## 0. 新会话先读这里：当前不是 P3
+## 0. 新会话先读这里：当前仍是 P2.5，不是 P3
 
-当前主线是：
+当前主线：
 
 ```text
-P0 可行性验证            ✅
-P1 Classic Catalog       ✅ 基本完成
-P2 Reader Baseline       ✅ 主链可用
-P2.5 兼容性收口 / 架构    ← 当前阶段
-P3 中文排版专项            ⛔ 暂停继续扩展
+P0 可行性验证             ✅
+P1 Classic Catalog        ✅ 基本完成
+P2 Reader Baseline        ✅ 主链可用
+P2.5 兼容性收口 / 架构     ← 当前阶段
+P3 中文排版专项             ⛔ 冻结扩展
 P4 本地 / 离线
 P5 Modern Catalog
 ```
 
 **不要根据旧的 P1 → P2 → P3 顺序直接进入 P3。**
 
-当前第一目标是把已经解决的 Android WebView 兼容方案收束成可维护架构，并恢复/保持完整回归绿色。
+P3 writing-mode Spike 已经在 main，但当前任务是把 Android WebView 兼容突破收束成可维护架构。P2.5 Exit Criteria 全部满足之前，不继续字体、主题、简繁转换或竖排细节。
+
+当前 P2.5 执行状态：
+
+```text
+Step 0  恢复绿色基线               ✅
+Phase A Compatibility baseline      ◐ 已有真实设备基线，最终冻结回归待做
+Phase B BrowserCapabilities          ✅
+Phase C SectionDocumentLoader        ← 下一项实现任务
+Phase D BlobTextRegistry
+Phase E Foliate patch 收口
+        ↓
+P2.5 Exit Criteria
+        ↓
+正式继续 P3
+```
 
 ---
 
-## 1. 一个重要的当前状态：P3 Spike 已经提前落到 main
+## 1. 当前关键事实
 
-在本计划修订之前，一个新会话已经提交：
+### 1.1 P3 Spike 已提前落到 main
 
 `5781ede` — `feat(reader): start P3 CJK typography and vertical layout spike`
 
-它加入了：
+已包含：
 
 - `source / horizontal / vertical` writing mode；
-- CJK 字距与排版控制；
+- CJK 字距与基础排版控制；
 - 横竖排切换后的 Foliate 重分页 + CFI 恢复；
 - P3 Reader UI 控件；
 - Chromium / Firefox writing-mode smoke coverage。
 
-**这部分现在只视为“已落地的实验 Spike”，不是当前继续开发的阶段。不要继续往字体、主题、简繁转换或竖排细节扩展。**
+它现在只作为 **已落地的实验 Spike 和回归样本**。不要继续扩大 P3 功能面。
 
-当前最新 CI 已暴露一个回归：Chromium smoke 在“强制切回 horizontal”时读取到的 EPUB document writing mode 为 `null`。
+### 1.2 writing-mode CI 回归已收口
 
-因此现在的执行顺序是：
+此前 Chromium smoke 在强制恢复 `horizontal-tb` 时偶发读到 `null`。结论是 Foliate iframe reflow 生命周期中的测试竞态，不是 Reader 产品回归。
+
+修复后：
+
+- main CI #91 绿色；
+- writing-mode 必须连续稳定观测后才通过；
+- Chromium / Firefox 真实 EPUB smoke 均绿色。
+
+### 1.3 `BrowserCapabilities` 表示“当前应用环境实际可用能力”
+
+Phase B 新增的 capability 结果不是浏览器品牌表，也不是“UA 理论支持列表”。它描述 **当前 document 环境中的有效运行能力**，因此会受到浏览器实现、sandbox、CSP 等共同影响。
+
+例如当前 `index.html` 的 CSP：
 
 ```text
-先恢复 CI 绿色 / 确认 P3 Spike 没破坏 Reader
-        ↓
-P2.5 compatibility freeze
-        ↓
-BrowserCapabilities extraction
-        ↓
-SectionDocumentLoader
-        ↓
-BlobTextRegistry
-        ↓
-Foliate patch 收口
-        ↓
-P2.5 exit criteria 全部通过
-        ↓
-再正式继续 P3
+connect-src 'self' https://raw.githubusercontent.com
 ```
 
-不要把当前 CI 红灯当成继续实现 P3 的理由；它是兼容性收口的一部分。
+没有开放 `blob:`，所以 `fetch(blob:)` 在 CI Chromium 中也可以是 FAIL。这个结果是有效事实，不代表 Chromium 本身不会 `fetch(blob:)`。
+
+因此：
+
+- 不允许根据单个 capability 反推浏览器品牌；
+- Phase C 必须按实际可用能力选 transport；
+- `blobIframe`、`srcdocIframe`、`documentWriteIframe` 是 section transport 的直接信号；
+- CSP 是否未来允许 `connect-src blob:` 应独立评估，不为了让 probe 变绿而修改安全策略。
 
 ---
 
@@ -112,16 +132,16 @@ P2.5 exit criteria 全部通过
 
 ---
 
-## 3. Android WebView 已确认的根因
+## 3. Android WebView 兼容结论
 
-问题不是 WebView 不能排版，而是 Foliate 默认 transport 在部分 WebView 中失效。
+问题不是 WebView 不能排版，而是 Foliate 默认 section transport 在部分 WebView 中失效。
 
-诊断结果：
+已观察到的受影响环境表现：
 
 ```text
 PASS  JavaScript compatibility
-FAIL  fetch(blob:)
-FAIL  sandbox iframe navigation to blob:
+FAIL  fetch(blob:)                    ← 也可能受 CSP 影响
+FAIL  sandbox iframe navigation blob:
 PASS  iframe srcdoc
 PASS  iframe document.write
 PASS  CSS columns
@@ -135,7 +155,7 @@ PASS  document.fonts
 ```text
 Foliate rewritten XHTML / HTML
         │
-        ├── Blob URL → 正常浏览器 blob iframe
+        ├── Blob URL → 正常 blob iframe 路径
         │
         └── 保存改写后的章节文本
                     ↓
@@ -146,46 +166,42 @@ blob iframe 失败 → 取回 HTML → srcdoc → document.write fallback
               Foliate 正常分页
 ```
 
-Via 与百度浏览器已经通过这条路径成功显示正文。
+Via 与百度浏览器此前已通过这条路径成功显示正文。
 
-兼容策略必须继续保持 **capability-driven**，禁止新增 `if (isVia)` / `if (isBaidu)` 一类品牌分支。
+兼容策略必须保持 **capability-driven**，禁止新增 `if (isVia)` / `if (isBaidu)` / User-Agent 品牌分支。
 
 ---
 
 ## 4. P2.5 — 当前阶段
 
-### Step 0 — 先恢复当前 main 的绿色基线 ← **立即下一步**
+### Step 0 — 绿色基线 ✅
 
-当前 `5781ede` P3 Spike 后，最新 CI 在 Chromium Reader smoke 中失败：
+- [x] 定位 writing-mode smoke 失败为 iframe lifecycle 测试竞态；
+- [x] Chromium smoke 恢复绿色；
+- [x] Firefox smoke 同样通过；
+- [x] 没有借修复继续新增 P3 功能；
+- [x] Reader 产品代码无需为该失败回滚 writing-mode Spike。
 
-```text
-Forced horizontal mode did not reach the EPUB document: null
-```
+Via / 百度的最终真实设备复验仍属于 P2.5 Exit 前的 compatibility freeze，不用桌面自动化冒充完成。
 
-先完成：
+### Phase A — Compatibility Freeze / 回归矩阵 ◐
 
-- [ ] 确认失败是测试时序问题、Reader re-open 生命周期问题，还是 P3 writing-mode 实现回归；
-- [ ] 修复或收束 P3 Spike，使 Chromium smoke 重新绿色；
-- [ ] Firefox smoke 同样通过；
-- [ ] 不趁此机会继续新增 P3 功能；
-- [ ] Via / 百度现有正文 fallback 不被改坏。
+已有基线环境：
 
-只有绿色基线恢复后，才开始架构抽离。
-
-### Phase A — Compatibility Freeze / 回归矩阵
-
-目标环境：
-
-- Chrome Android；
+- Chrome / Chromium；
 - Firefox Android；
 - Via Android；
 - 百度浏览器 Android WebView；
 - Desktop Chromium；
-- Desktop Firefox；
-- iOS Safari（有设备时）。
+- Desktop Firefox。
 
-至少验证：
+最终冻结回归还需要覆盖：
 
+- [ ] Chrome Android；
+- [ ] Firefox Android；
+- [ ] Via Android；
+- [ ] 百度浏览器 Android WebView；
+- [ ] iOS Safari（有设备时）；
 - [ ] 横式 EPUB；
 - [ ] 原始直式 EPUB；
 - [ ] 多卷册；
@@ -197,20 +213,24 @@ Forced horizontal mode did not reach the EPUB document: null
 - [ ] 一本关闭后再开第二本；
 - [ ] repeated open / destroy；
 - [ ] 无永久 navigation lock；
-- [ ] WebView fallback 不影响 Chromium / Firefox。
+- [x] WebView compatibility 代码没有破坏 Desktop Chromium / Firefox smoke。
 
-### Phase B — 抽离 `BrowserCapabilities`
+### Phase B — `BrowserCapabilities` ✅
 
-这是绿色基线后的**第一项架构实现任务**。
+已完成：
 
-- [ ] 从 `#diagnostics` 抽出 capability probes；
-- [ ] 建立 typed `BrowserCapabilities`；
-- [ ] page / session 内缓存结果；
-- [ ] Reader 与 diagnostics 共用同一套检测；
-- [ ] diagnostics 只做展示与复制报告；
-- [ ] 不增加 browser-name sniffing。
+- [x] 从 `#diagnostics` 抽出 capability probes；
+- [x] 建立 typed `BrowserCapabilities`；
+- [x] page / session 内 Promise cache；
+- [x] diagnostics 和 Reader 使用同一 probe 模块；
+- [x] diagnostics 只负责触发、展示和复制报告；
+- [x] Reader 在 EPUB 已可读后 idle warm-up，不阻塞首次打开；
+- [x] 手动“重新诊断”可以显式 refresh cache；
+- [x] 没有 browser-name sniffing；
+- [x] Chromium / Firefox CI 会真实访问 `#diagnostics` 并产出 8 个 canonical capabilities；
+- [x] capability smoke 后原有真实 EPUB 回归继续通过。
 
-目标模型：
+当前模型：
 
 ```ts
 type BrowserCapabilities = {
@@ -225,9 +245,13 @@ type BrowserCapabilities = {
 }
 ```
 
-### Phase C — `SectionDocumentLoader`
+Reader 目前只预热并缓存这些事实。**Phase B 不负责改变 section transport。**
 
-把当前 iframe fallback 变成正式策略：
+### Phase C — `SectionDocumentLoader` ← **立即下一步**
+
+目标：把现在散落在 Foliate patch 中的 iframe fallback 变成正式、可测试的 transport 策略。
+
+目标顺序：
 
 ```text
 blob iframe
@@ -241,10 +265,18 @@ explicit compatibility error
 
 要求：
 
-- capability 结果可直接跳过已知坏路径；
-- 未知环境保留 timeout；
-- Chromium / Firefox 保持 blob 快路径；
-- transport / render / pagination 错误可区分。
+- [ ] 定义明确的 `SectionDocumentLoader` contract；
+- [ ] 输入能接受 blob URL 与已改写 HTML；
+- [ ] 消费 `BrowserCapabilities`；
+- [ ] capability 已知 false 时直接跳过对应坏路径；
+- [ ] 未知 / 运行时失效环境仍保留 timeout / failure fallback；
+- [ ] Chromium / Firefox 保持 blob iframe 快路径；
+- [ ] Via / 百度能直接避开已知坏 transport，而不是每章节重复等 timeout；
+- [ ] transport / render / pagination 错误可以区分；
+- [ ] 不让 React Reader UI 知道 iframe transport；
+- [ ] 不新增浏览器品牌判断。
+
+**边界要求：** Phase C 先建立 loader / strategy 边界；不要同时把 BlobTextRegistry 生命周期重构完，也不要扩展 P3。
 
 ### Phase D — `BlobTextRegistry`
 
@@ -265,8 +297,8 @@ explicit compatibility error
 
 要求：
 
-- [ ] 每个 patch 都写明原因；
-- [ ] 每个 patch 都写明删除条件；
+- [ ] 每个 patch 写明原因；
+- [ ] 每个 patch 写明删除条件；
 - [ ] generic polyfill 能移出 Foliate patch 的逐步移出；
 - [ ] 保留 upstream source assertions；
 - [ ] 回归覆盖完整前不升级 Foliate；
@@ -278,24 +310,22 @@ explicit compatibility error
 
 只有全部满足，才允许正式继续 P3：
 
-- [ ] 当前 P3 Spike 不再让 CI 变红；
-- [ ] Chromium smoke 绿色；
-- [ ] Firefox smoke 绿色；
-- [ ] Chrome / Firefox / Via / 百度真实阅读链绿色；
-- [ ] `BrowserCapabilities` 已抽离；
-- [ ] diagnostics 与 Reader 共用 probes；
-- [ ] `SectionDocumentLoader` 边界明确；
+- [x] 当前 P3 Spike 不再让 CI 变红；
+- [x] Chromium smoke 绿色；
+- [x] Firefox smoke 绿色；
+- [ ] Chrome / Firefox / Via / 百度最终真实阅读链复验绿色；
+- [x] `BrowserCapabilities` 已抽离；
+- [x] diagnostics 与 Reader 共用 probes；
+- [ ] `SectionDocumentLoader` 边界明确并落地；
 - [ ] `BlobTextRegistry` 生命周期明确；
 - [ ] Foliate patches 已分类并可维护；
-- [ ] 不存在新增的浏览器品牌 Reader 分支。
+- [x] 当前没有新增浏览器品牌 Reader 分支。
 
 ---
 
 ## 6. P3 — 中文排版专项 ⛔ 冻结扩展，等待 P2.5 Exit
 
-已经提前存在的 Spike 可以保留用于回归与架构验证，但当前不继续扩大功能面。
-
-P2.5 完成后再继续：
+已存在的 Spike 保留用于回归与架构验证。P2.5 完成后再继续：
 
 ### P3.1 横排
 
@@ -389,7 +419,7 @@ Reader 核心稳定后再做：
       ↓
 读 reader-compatibility-roadmap.md
       ↓
-推进最靠前未完成的 P2.5 step/phase
+推进最靠前未完成的 P2.5 phase
       ↓
 P2.5 Exit Criteria 全绿
       ↓
@@ -398,4 +428,4 @@ P2.5 Exit Criteria 全绿
 
 ### 当前新会话推荐任务
 
-> 继续推进 `yushun1990/haodoo`。当前阶段是 P2.5 Reader 兼容性收口，不继续扩展 P3。main 上已经有 `5781ede` 的 P3 writing-mode Spike，但最新 Chromium smoke 在强制恢复 `horizontal-tb` 时返回 `null`。第一步先审计这个失败，恢复 Chromium / Firefox CI 绿色，同时不能破坏 Via / 百度的 blob → registry → srcdoc/document.write fallback。绿色基线恢复后，下一架构任务是 Phase B：抽离 `BrowserCapabilities`，让 diagnostics 和 Reader 共用 capability probes。不要继续字体、主题、简繁转换或竖排细节。
+> 继续推进 `yushun1990/haodoo`。当前阶段是 P2.5 Reader 兼容性收口，P3 暂停扩展。绿色基线已恢复，Phase B `BrowserCapabilities` 已完成；capability 表示当前应用环境的有效运行能力，会受到 CSP 等策略影响，不能当浏览器品牌判断。下一项是 Phase C：建立 `SectionDocumentLoader`，消费 capability 结果，在 blob iframe → srcdoc → document.write 之间进行显式、可测试的 transport 选择，并区分 transport/render/pagination failure。不要在 Phase C 顺手完成 BlobTextRegistry 重构，也不要继续字体、主题、简繁转换或竖排细节。
