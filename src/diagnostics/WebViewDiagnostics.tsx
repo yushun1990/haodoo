@@ -108,7 +108,7 @@ async function runAllProbes(): Promise<ProbeResult[]> {
   await add('JS compatibility', () => {
     const features = {
       arrayAt: typeof Array.prototype.at,
-      findLast: typeof Array.prototype.findLast,
+      findLast: typeof (Array.prototype as typeof Array.prototype & { findLast?: unknown }).findLast,
       objectFromEntries: typeof Object.fromEntries,
       objectGroupBy: typeof (Object as typeof Object & { groupBy?: unknown }).groupBy,
       mapGroupBy: typeof (Map as typeof Map & { groupBy?: unknown }).groupBy,
