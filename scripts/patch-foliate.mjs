@@ -125,7 +125,16 @@ const iframeLoadMethod = `    async load(src, afterLoad, beforeRender) {
                 finish(resolve)
             }
             const getSourceHtml = () => {
-                sourceHtmlPromise ??= fetch(src).then(async response => {
+                if (sourceHtmlPromise) return sourceHtmlPromise
+
+                const registry = globalThis.__HAODOO_FOLIATE_BLOB_TEXT__
+                const registered = registry?.get?.(src)
+                if (typeof registered === 'string' && registered.trim()) {
+                    sourceHtmlPromise = Promise.resolve(registered)
+                    return sourceHtmlPromise
+                }
+
+                sourceHtmlPromise = fetch(src).then(async response => {
                     if (!response.ok) {
                         throw new Error(\`Foliate section blob fetch failed: ${'${response.status}'} ${'${response.statusText}'}\`)
                     }
@@ -161,7 +170,7 @@ const iframeLoadMethod = `    async load(src, afterLoad, beforeRender) {
                     }
 
                     if (!hasContent(doc)) {
-                        throw new Error('Foliate section HTML was fetched, but Via/WebView produced an empty iframe document')
+                        throw new Error('Foliate section HTML was recovered, but WebView produced an empty iframe document')
                     }
                     renderDocument(doc)
                 } catch (error) {
