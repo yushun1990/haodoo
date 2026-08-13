@@ -4,7 +4,7 @@
   "version": "0.2.0",
   "type": "module",
   "scripts": {
-    "patch:foliate": "node scripts/patch-foliate.mjs",
+    "patch:foliate": "node scripts/patch-foliate.mjs && node scripts/patch-foliate-legacy.mjs",
     "postinstall": "npm run patch:foliate",
     "sync:classic": "tsx scripts/sync-classic.ts",
     "predev": "npm run patch:foliate && npm run sync:classic",
