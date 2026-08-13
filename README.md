@@ -90,7 +90,7 @@ haodoo.org WordPress API ─────┘           │
                                                   IndexedDB / OPFS
 ```
 
-详细设计见 [`docs/design.md`](docs/design.md)。
+详细设计见 [`docs/design.md`](docs/design.md)。当前 Reader / WebView 兼容架构与下一阶段重构路线见 [`docs/reader-compatibility-roadmap.md`](docs/reader-compatibility-roadmap.md)。
 
 ## 项目原则
 
@@ -120,17 +120,21 @@ haodoo.org WordPress API ─────┘           │
 
 - [设计文档](docs/design.md)
 - [推进计划](docs/plan.md)
+- [Reader / WebView 兼容架构与后续路线](docs/reader-compatibility-roadmap.md)
 
 ## 状态
 
-项目处于早期设计与技术验证阶段。
+项目已经进入 **Reader 兼容性收口与架构重构准备阶段**。
 
 目前已验证：
 
-- 浏览器可以跨域读取 `haodoo-classic` 的 GitHub Raw catalog；
-- 浏览器可以跨域读取 `haodoo-classic` 的 GitHub Raw EPUB；
-- 浏览器可以跨域读取 `haodoo.org` 的 EPUB；
-- 浏览器可以跨域读取 `haodoo.org` 的封面；
-- `haodoo.org` WordPress API 可被非浏览器客户端读取，但浏览器端缺少 CORS `Access-Control-Allow-Origin`。
+- Classic catalog 已可构建并在静态 PWA 中检索、浏览；
+- Chrome / Chromium 与 Firefox 可打开并阅读真实好读 EPUB；
+- Android 百度浏览器 WebView 与 Via 已可打开 EPUB 正文；
+- 已确认部分 Android WebView 可以创建 `blob:` URL，但不能 `fetch(blob:)`，sandbox iframe 也不能可靠导航到 `blob:`；
+- 当前兼容方案会保留 Foliate 改写后的章节 HTML，并在 blob iframe 不可用时改走 `srcdoc` / `document.write`；
+- `#diagnostics` 可检测 JS、blob、iframe、CSS columns、Range geometry、ResizeObserver 等 Reader 关键能力；
+- PWA manifest、Service Worker、跨浏览器安装入口与安装图标已经可用；
+- Chromium 与 Firefox Reader smoke tests 已纳入 CI。
 
-下一步见 [`docs/plan.md`](docs/plan.md)。
+下一步不是继续堆浏览器特例，而是先完成真实设备回归，再把 `BrowserCapabilities`、`SectionDocumentLoader`、`BlobTextRegistry` 和 Foliate compatibility adapter 正式拆分。详细顺序见 [`docs/reader-compatibility-roadmap.md`](docs/reader-compatibility-roadmap.md)。
