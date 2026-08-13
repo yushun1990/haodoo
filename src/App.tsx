@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { Book, BookPart, Catalog } from './domain/book'
 import { ReaderPage } from './reader/ReaderPage'
 import type { ReaderResourceKind } from './reader/ReaderEngine'
+import { WebViewDiagnostics } from './diagnostics/WebViewDiagnostics'
 
 const PAGE_SIZE = 48
 
@@ -9,6 +10,7 @@ type Route =
   | { kind: 'catalog' }
   | { kind: 'book'; bookId: string }
   | { kind: 'reader'; bookId: string; partId: string; resourceKind: ReaderResourceKind }
+  | { kind: 'diagnostics' }
 
 function decodeRoutePart(value: string): string {
   try {
@@ -23,6 +25,8 @@ function parseRoute(): Route {
   if (!hash) return { kind: 'catalog' }
 
   const parts = hash.split('/')
+  if (parts[0] === 'diagnostics') return { kind: 'diagnostics' }
+
   if (parts[0] === 'book' && parts[1]) {
     return { kind: 'book', bookId: decodeRoutePart(parts[1]) }
   }
@@ -360,6 +364,8 @@ function CatalogPage({ catalog }: { catalog: Catalog }) {
 export default function App() {
   const { catalog, error } = useCatalog()
   const route = useRoute()
+
+  if (route.kind === 'diagnostics') return <WebViewDiagnostics />
 
   if (error) {
     return (
