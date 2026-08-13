@@ -100,15 +100,23 @@ const currentWritingMode = async (page) =>
   })
 
 const waitForWritingMode = async (page, expected) => {
-  await page.waitForFunction(
-    (mode) => {
-      const view = document.querySelector('.reader-engine-view')
-      const renderer = view?.renderer
-      const doc = renderer?.getContents?.()[0]?.doc
-      return Boolean(doc?.body && doc.defaultView?.getComputedStyle(doc.body).writingMode === mode)
-    },
-    expected,
-    { timeout: 30_000 },
+  const deadline = Date.now() + 30_000
+  let stableObservations = 0
+  let lastObserved = null
+
+  while (Date.now() < deadline) {
+    lastObserved = await currentWritingMode(page)
+    if (lastObserved === expected) {
+      stableObservations += 1
+      if (stableObservations >= 3) return lastObserved
+    } else {
+      stableObservations = 0
+    }
+    await page.waitForTimeout(100)
+  }
+
+  throw new Error(
+    `Writing mode did not stabilize at ${expected}; last observed mode: ${lastObserved}`,
   )
 }
 
@@ -232,8 +240,7 @@ try {
   const beforeVertical = await currentPosition(page)
   await page.getByRole('button', { name: '竖排' }).click()
   await waitReaderReady(page)
-  await waitForWritingMode(page, 'vertical-rl')
-  const verticalMode = await currentWritingMode(page)
+  const verticalMode = await waitForWritingMode(page, 'vertical-rl')
   if (verticalMode !== 'vertical-rl') {
     throw new Error(`Forced vertical mode did not reach the EPUB document: ${verticalMode}`)
   }
@@ -254,8 +261,7 @@ try {
   stage = 'old-man-force-horizontal'
   await page.getByRole('button', { name: '横排' }).click()
   await waitReaderReady(page)
-  await waitForWritingMode(page, 'horizontal-tb')
-  const horizontalMode = await currentWritingMode(page)
+  const horizontalMode = await waitForWritingMode(page, 'horizontal-tb')
   if (horizontalMode !== 'horizontal-tb') {
     throw new Error(`Forced horizontal mode did not reach the EPUB document: ${horizontalMode}`)
   }
