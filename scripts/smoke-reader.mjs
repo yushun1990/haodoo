@@ -110,6 +110,71 @@ const waitReaderReady = async (page) => {
   )
 }
 
+const verifySectionDocumentLoader = async (page) =>
+  page.evaluate(async () => {
+    const bridge = globalThis.__HAODOO_SECTION_DOCUMENT_LOADER__
+    if (!bridge?.load || !bridge?.getLastResult) {
+      throw new Error('SectionDocumentLoader bridge was not installed before Foliate')
+    }
+
+    const liveResult = bridge.getLastResult()
+    if (liveResult?.transport !== 'blob') {
+      throw new Error(`Mainstream real EPUB did not use blob fast path: ${liveResult?.transport ?? 'none'}`)
+    }
+
+    const html = '<!doctype html><html><body><p>Haodoo SectionDocumentLoader fallback smoke</p></body></html>'
+    const baseCapabilities = {
+      blobFetch: false,
+      blobIframe: false,
+      srcdocIframe: true,
+      documentWriteIframe: true,
+      cssColumns: true,
+      rangeGeometry: true,
+      resizeObserver: true,
+      documentFonts: true,
+    }
+
+    const runForced = async (capabilities, expectedTransport) => {
+      const iframe = document.createElement('iframe')
+      iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts')
+      iframe.style.position = 'fixed'
+      iframe.style.left = '-10000px'
+      iframe.style.width = '320px'
+      iframe.style.height = '240px'
+      document.body.append(iframe)
+      try {
+        const result = await bridge.load({
+          iframe,
+          source: 'blob:haodoo-section-document-loader-smoke',
+          getHtml: async () => html,
+          capabilities,
+        })
+        if (result.transport !== expectedTransport) {
+          throw new Error(`Expected ${expectedTransport} transport, got ${result.transport}`)
+        }
+        if (!result.document.body?.textContent?.includes('fallback smoke')) {
+          throw new Error(`${expectedTransport} transport returned an unusable document`)
+        }
+        return result.attempts
+      } finally {
+        iframe.remove()
+      }
+    }
+
+    const srcdocAttempts = await runForced(baseCapabilities, 'srcdoc')
+    if (!srcdocAttempts.some((attempt) => attempt.transport === 'blob' && attempt.outcome === 'skipped')) {
+      throw new Error('srcdoc strategy did not record capability-driven blob skip')
+    }
+
+    const writeAttempts = await runForced(
+      { ...baseCapabilities, srcdocIframe: false },
+      'document-write',
+    )
+    if (!writeAttempts.some((attempt) => attempt.transport === 'srcdoc' && attempt.outcome === 'skipped')) {
+      throw new Error('document.write strategy did not record capability-driven srcdoc skip')
+    }
+  })
+
 const readingPositions = async (page) =>
   page.evaluate(() =>
     Object.keys(localStorage)
@@ -192,6 +257,10 @@ try {
   await openBookBySearch(page, '小王子', /^【小王子】$/)
   await page.getByRole('link', { name: '阅读横式' }).click()
   await waitReaderReady(page)
+
+  stage = 'section-document-loader'
+  console.log(`[${browserName}] Compatibility smoke: blob fast path + forced srcdoc/document.write strategies`)
+  await verifySectionDocumentLoader(page)
 
   stage = 'little-prince-horizontal-next'
   const initial = await currentPosition(page)
@@ -320,7 +389,7 @@ try {
   }
 
   console.log(
-    `[${browserName}] Reader smoke passed: shared capabilities, 3 real books, CFI restore, multi-part isolation, CJK typography, horizontal + vertical reflow`,
+    `[${browserName}] Reader smoke passed: shared capabilities, SectionDocumentLoader, 3 real books, CFI restore, multi-part isolation, CJK typography, horizontal + vertical reflow`,
   )
 } finally {
   await browser?.close()
