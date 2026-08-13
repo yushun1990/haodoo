@@ -60,6 +60,37 @@ function ensureFoliateBrowserCompatibility(): void {
       configurable: true,
     })
   }
+
+  const objectConstructor = Object as typeof Object & {
+    groupBy?: <T, K extends PropertyKey>(
+      items: Iterable<T>,
+      callback: (item: T, index: number) => K,
+    ) => Partial<Record<K, T[]>>
+  }
+
+  if (typeof objectConstructor.groupBy !== 'function') {
+    Object.defineProperty(Object, 'groupBy', {
+      value<T, K extends PropertyKey>(
+        items: Iterable<T>,
+        callback: (item: T, index: number) => K,
+      ): Partial<Record<K, T[]>> {
+        if (items == null) throw new TypeError('Object.groupBy requires an iterable')
+        if (typeof callback !== 'function') throw new TypeError('Object.groupBy callback must be a function')
+
+        const groups = Object.create(null) as Partial<Record<K, T[]>>
+        let index = 0
+        for (const item of items) {
+          const key = callback(item, index++)
+          const current = groups[key]
+          if (current) current.push(item)
+          else groups[key] = [item]
+        }
+        return groups
+      },
+      writable: true,
+      configurable: true,
+    })
+  }
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
