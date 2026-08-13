@@ -16,7 +16,7 @@ P4 本地 / 离线
 P5 Modern Catalog
 ```
 
-P3 writing-mode Spike 已经在 main，但当前任务是把 Android WebView 兼容突破收束成可维护架构。P2.5 Exit Criteria 全部满足之前，不继续字体、主题、简繁转换或竖排细节。
+P3 writing-mode Spike 已经在 main，但当前任务仍是把 Android WebView 兼容突破收束成可维护架构。P2.5 Exit Criteria 全部满足之前，不继续字体、主题、简繁转换或竖排细节。
 
 当前 P2.5 执行状态：
 
@@ -25,8 +25,8 @@ Step 0  恢复绿色基线               ✅
 Phase A Compatibility baseline      ◐ 已有真实设备基线，最终冻结回归待做
 Phase B BrowserCapabilities          ✅
 Phase C SectionDocumentLoader        ✅
-Phase D BlobTextRegistry             ← 下一项实现任务
-Phase E Foliate patch 收口
+Phase D BlobTextRegistry             ✅
+Phase E Foliate patch 收口           ← 下一项实现任务
         ↓
 P2.5 Exit Criteria
         ↓
@@ -41,21 +41,13 @@ P2.5 Exit Criteria
 
 `5781ede` — `feat(reader): start P3 CJK typography and vertical layout spike`
 
-已包含：
-
-- `source / horizontal / vertical` writing mode；
-- CJK 字距与基础排版控制；
-- 横竖排切换后的 Foliate 重分页 + CFI 恢复；
-- P3 Reader UI 控件；
-- Chromium / Firefox writing-mode smoke coverage。
+已包含 `source / horizontal / vertical` writing mode、CJK 字距与基础排版控制、横竖排重分页 + CFI 恢复、Reader UI 控件，以及 Chromium / Firefox writing-mode smoke。
 
 它只作为 **已落地的实验 Spike 和回归样本**。不要继续扩大 P3 功能面。
 
 ### 1.2 writing-mode CI 回归已收口
 
-此前 Chromium smoke 在强制恢复 `horizontal-tb` 时偶发读到 `null`。结论是 Foliate iframe reflow 生命周期中的测试竞态，不是 Reader 产品回归。
-
-修复后 Chromium / Firefox 真实 EPUB smoke 持续绿色。
+此前 Chromium smoke 强制恢复 `horizontal-tb` 时偶发读到 `null`，结论是 Foliate iframe reflow 生命周期中的测试竞态，不是 Reader 产品回归。修复后 Chromium / Firefox 真实 EPUB smoke 持续绿色。
 
 ### 1.3 `BrowserCapabilities` 是有效运行能力，不是 UA 能力表
 
@@ -88,13 +80,43 @@ Haodoo SectionDocumentLoader
         └── document.write
 ```
 
-应用在导入 Foliate 前安装一个很薄的 loader bridge。patched paginator 不再自己实现完整 fallback，只把 iframe + source + rewritten HTML provider 交给 loader，然后回到 Foliate 的 render / pagination 流程。
+应用在导入 Foliate 前安装一个很薄的 loader bridge。patched paginator 只交出 iframe + source + rewritten HTML provider，然后回到 Foliate 的 render / pagination 流程。
 
 失败边界已经区分：
 
 - `SectionDocumentTransportError` → transport；
 - `SectionRenderError` → document preparation / render hook；
 - `SectionPaginationError` → pagination layout。
+
+### 1.5 Blob text 已有独立所有权与生命周期
+
+Phase D 后不再暴露 `globalThis.__HAODOO_FOLIATE_BLOB_TEXT__ = new Map()`。
+
+现在是：
+
+```text
+Foliate Loader createURL
+        ↓
+BlobTextRegistry.register(blobUrl, rewrittenText)
+        ↓
+SectionDocumentLoader fallback 通过 getHtml provider 读取
+        ↓
+Foliate unref / destroy
+        ↓
+BlobTextRegistry.delete(blobUrl)
+        ↓
+URL.revokeObjectURL(blobUrl)
+```
+
+关键边界：
+
+- registry 是独立的 memory-only adapter；
+- contract 为 `register/get/delete/clear`，`size()` 仅用于诊断/测试；
+- Foliate 仍拥有 blob URL 的 create / unref / destroy 生命周期；
+- registry 只镜像 rewritten XHTML / HTML / SVG 文本，不拥有 URL revoke；
+- `SectionDocumentLoader` 仍只依赖 `getHtml()` provider，不直接依赖 registry 实现；
+- registry 不承担 EPUB 持久缓存、离线存储或缓存策略；
+- legacy patch 能迁移本地已经打过旧 Map patch 的 `node_modules`，不要求先手工删除依赖目录。
 
 ---
 
@@ -155,7 +177,7 @@ PASS  ResizeObserver
 PASS  document.fonts
 ```
 
-Phase C 后正式策略：
+当前正式路径：
 
 ```text
 BrowserCapabilities
@@ -169,9 +191,13 @@ SectionDocumentLoader
         └── document.write
                ↓ fail
          explicit transport error
+
+fallback HTML source
+        ↑
+BlobTextRegistry ← mirrors Foliate blob lifecycle
 ```
 
-rewritten section HTML 目前仍由旧的 `__HAODOO_FOLIATE_BLOB_TEXT__` registry 提供；这正是 Phase D 要收口的内容。
+兼容策略继续保持 **capability-driven**，禁止浏览器品牌分支。
 
 ---
 
@@ -215,21 +241,6 @@ rewritten section HTML 目前仍由旧的 `__HAODOO_FOLIATE_BLOB_TEXT__` registr
 - [x] 8 个 canonical capabilities 有 Chromium / Firefox smoke；
 - [x] 无 browser-name sniffing。
 
-模型：
-
-```ts
-type BrowserCapabilities = {
-  blobFetch: boolean
-  blobIframe: boolean
-  srcdocIframe: boolean
-  documentWriteIframe: boolean
-  cssColumns: boolean
-  rangeGeometry: boolean
-  resizeObserver: boolean
-  documentFonts: boolean
-}
-```
-
 ### Phase C — `SectionDocumentLoader` ✅
 
 - [x] 独立 typed loader contract；
@@ -244,24 +255,25 @@ type BrowserCapabilities = {
 - [x] React Reader UI 不知道 iframe transport；
 - [x] Foliate patch 只保留 bridge + Foliate 自身 render/pagination；
 - [x] 不新增浏览器品牌判断；
-- [x] Chromium / Firefox CI 在 loader 策略测试后继续通过三本真实 EPUB 回归。
+- [x] Chromium / Firefox CI 在 loader 策略测试后继续通过真实 EPUB 回归。
 
-**尚未冒充完成的事情：** Via / 百度最终真机复验仍属于 Phase A / Exit Criteria；Phase C 自动化只证明 capability-driven skip/fallback 策略本身成立。
+### Phase D — `BlobTextRegistry` ✅
 
-### Phase D — `BlobTextRegistry` ← **立即下一步**
+- [x] 独立 `BlobTextRegistry` 模块；
+- [x] 明确 `register/get/delete/clear` contract；
+- [x] 与 Foliate blob URL create / unref 生命周期同步；
+- [x] loader / book destroy 时逐 URL 删除 registry entry 并 revoke；
+- [x] focused contract / lifecycle tests；
+- [x] focused test 会检查 patched `epub.js` 的 register/delete/revoke hooks；
+- [x] 旧 `__HAODOO_FOLIATE_BLOB_TEXT__` 裸 Map 已移除；
+- [x] `SectionDocumentLoader` 只依赖 HTML provider，不直接依赖具体 registry；
+- [x] registry 只在内存中存在，不承担 EPUB 离线缓存职责；
+- [x] 没有升级 Foliate，也没有继续 P3；
+- [x] Phase D 后 Chromium / Firefox 原有真实 EPUB CI 回归继续绿色。
 
-当前 rewritten HTML registry 仍被植入 Foliate `epub.js`，并通过全局 `Map` 暴露。这一阶段只收口它的所有权与生命周期：
+另有 `scripts/smoke-blob-registry.mjs` 可用于 focused 浏览器集成验证：真实 EPUB register → Reader close/destroy → registry size 归零 → reopen → 再清理。它不替代最终真机 Phase A。
 
-- [ ] 建立独立 `BlobTextRegistry` 模块；
-- [ ] 明确 `register/get/delete/clear` contract；
-- [ ] 与 Foliate blob URL create / unref 生命周期同步；
-- [ ] book / loader destroy 时清理；
-- [ ] focused lifecycle tests；
-- [ ] `SectionDocumentLoader` 只依赖 HTML provider，不直接依赖具体 Map；
-- [ ] registry 只在内存中存在，不承担 EPUB 离线缓存职责；
-- [ ] 不在本阶段升级 Foliate 或继续 P3。
-
-### Phase E — Foliate patch 收口
+### Phase E — Foliate patch 收口 ← **立即下一步**
 
 把剩余 patch 分类为：
 
@@ -271,11 +283,14 @@ type BrowserCapabilities = {
 
 要求：
 
-- [ ] 每个 patch 写明原因与删除条件；
-- [ ] generic polyfill 能移出 Foliate patch 的逐步移出；
-- [ ] 保留 upstream source assertions；
+- [ ] 为每个 patch 写明类别、原因与删除条件；
+- [ ] 把能移出 Foliate source rewriting 的 generic polyfill 继续移到 compatibility/bootstrap；
+- [ ] 保留并加强 upstream source assertions，升级 Foliate 时 fail-fast；
+- [ ] 明确哪些 patch 可考虑 upstream PR；
 - [ ] 回归覆盖完整前不升级 Foliate；
-- [ ] generic hardening 后续可考虑 upstream PR。
+- [ ] 不在 Phase E 顺手继续 P3。
+
+Phase E 完成后不要立即宣布 P2.5 结束，还要回到 Phase A 做最终真机冻结回归并核对 Exit Criteria。
 
 ---
 
@@ -290,7 +305,7 @@ type BrowserCapabilities = {
 - [x] `BrowserCapabilities` 已抽离；
 - [x] diagnostics 与 Reader 共用 probes；
 - [x] `SectionDocumentLoader` 边界明确并落地；
-- [ ] `BlobTextRegistry` 生命周期明确；
+- [x] `BlobTextRegistry` 生命周期明确；
 - [ ] Foliate patches 已分类并可维护；
 - [x] 当前没有新增浏览器品牌 Reader 分支。
 
@@ -350,6 +365,8 @@ Reader 核心稳定后再做 WordPress 构建期同步、稳定书码、metadata
       ↓
 推进最靠前未完成的 P2.5 phase
       ↓
+Phase E 完成后执行 Phase A 最终真机冻结回归
+      ↓
 P2.5 Exit Criteria 全绿
       ↓
 才继续 P3
@@ -357,4 +374,4 @@ P2.5 Exit Criteria 全绿
 
 ### 当前新会话推荐任务
 
-> 继续推进 `yushun1990/haodoo`。当前阶段是 P2.5 Reader 兼容性收口，P3 暂停扩展。Phase B `BrowserCapabilities` 和 Phase C `SectionDocumentLoader` 已完成；section transport 已从 Foliate patch 抽成 capability-driven 的 blob iframe → srcdoc → document.write 策略，并保持 Chromium / Firefox 真实 EPUB 回归。下一项是 Phase D：把当前注入 Foliate `epub.js` 的全局 blob-text Map 收口为独立 `BlobTextRegistry`，明确 register/get/delete/clear 与 blob URL / destroy 生命周期。不要在 Phase D 升级 Foliate，也不要继续字体、主题、简繁转换或竖排细节。
+> 继续推进 `yushun1990/haodoo`。当前仍是 P2.5 Reader 兼容性收口，P3 暂停扩展。Phase B `BrowserCapabilities`、Phase C `SectionDocumentLoader`、Phase D `BlobTextRegistry` 已完成。下一项是 Phase E：系统分类并收口现有 Foliate patches，写清每个 patch 的类别、原因、删除条件和 upstream 可能性，把能脱离 Foliate source rewriting 的 generic compatibility 继续外移，同时保持 source assertions 和 Chromium / Firefox 回归。Phase E 后还要做 Phase A 最终真机冻结回归，不能直接宣布 P2.5 完成。
