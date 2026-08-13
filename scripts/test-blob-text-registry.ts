@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import {
   BlobTextRegistry,
   installBlobTextRegistry,
@@ -37,5 +39,15 @@ installed.register('blob:haodoo-global', '<p>global</p>')
 assert.equal(installed.get('blob:haodoo-global'), '<p>global</p>')
 installed.clear()
 assert.equal(installed.size(), 0)
+
+const patchedEpub = await readFile(resolve('node_modules/foliate-js/epub.js'), 'utf8')
+assert.equal(
+  patchedEpub.includes('__HAODOO_FOLIATE_BLOB_TEXT__'),
+  false,
+  'legacy global blob-text Map must not remain in patched Foliate',
+)
+assert.match(patchedEpub, /getHaodooBlobTextRegistry\(\)\.register\(url, newData\)/)
+assert.match(patchedEpub, /getHaodooBlobTextRegistry\(\)\.delete\(url\)/)
+assert.match(patchedEpub, /URL\.revokeObjectURL\(url\)/)
 
 console.log('BlobTextRegistry lifecycle tests passed')
