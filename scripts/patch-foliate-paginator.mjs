@@ -48,9 +48,9 @@ applyPatch(
   `    async #turnPage(dir, distance) {\n        if (this.#locked) return\n        this.#locked = true\n        try {\n            const prev = dir === -1\n            const shouldGo = await (prev ? this.#scrollPrev(distance) : this.#scrollNext(distance))\n            if (shouldGo) await this.#goTo({\n                index: this.#adjacentIndex(dir),\n                anchor: prev ? () => 1 : () => 0,\n            })\n            if (shouldGo || !this.hasAttribute('animated')) await wait(100)\n        } finally {\n            this.#locked = false\n        }\n    }`,
 )
 
-// Category C — Haodoo WebView adaptation. The whole upstream View.load method is
-// asserted exactly. If Foliate changes this method, do not transplant Haodoo's
-// loader bridge onto unknown code: fail and review the new upstream implementation.
+// Category C — Haodoo WebView adaptation. This is the exact View.load method
+// shipped by the npm foliate-js@1.0.1 package. If the package changes, refuse to
+// transplant Haodoo's bridge onto unknown code and print the installed method.
 const upstreamLoad = `    async load(src, afterLoad, beforeRender) {
         if (typeof src !== 'string') throw new Error(\`${'${src}'} is not string\`)
         return new Promise(resolve => {
@@ -61,7 +61,9 @@ const upstreamLoad = `    async load(src, afterLoad, beforeRender) {
                 // it needs to be visible for Firefox to get computed style
                 this.#iframe.style.display = 'block'
                 const { vertical, rtl } = getDirection(doc)
-                const background = getBackground(doc)
+                this.docBackground = getBackground(doc)
+                doc.body.style.background = 'none'
+                const background = this.docBackground
                 this.#iframe.style.display = 'none'
 
                 this.#vertical = vertical
@@ -144,10 +146,13 @@ const haodooLoad = `    async load(src, afterLoad, beforeRender) {
             try {
                 afterLoad?.(doc)
 
-                // it needs to be visible for Firefox to get computed style
+                // Preserve foliate-js@1.0.1 section background semantics while
+                // replacing only the iframe transport.
                 this.#iframe.style.display = 'block'
                 const { vertical, rtl } = getDirection(doc)
-                const background = getBackground(doc)
+                this.docBackground = getBackground(doc)
+                doc.body.style.background = 'none'
+                const background = this.docBackground
                 this.#iframe.style.display = 'none'
 
                 this.#vertical = vertical
@@ -193,7 +198,7 @@ if (!source.includes(upstreamLoad) && !source.includes(haodooLoad)) {
     ? source.slice(start, end)
     : '<View.load method boundaries not found>'
   throw new Error(
-    `Foliate 1.0.1 View.load source assertion failed. Actual installed method follows:\n---\n${actual}\n---`,
+    `Foliate ${'${FOLIATE_PATCH_VERSION ?? "1.0.1"}'} View.load source assertion failed. Actual installed method follows:\n---\n${actual}\n---`,
   )
 }
 
