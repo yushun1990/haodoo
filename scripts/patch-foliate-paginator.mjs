@@ -184,6 +184,19 @@ const haodooLoad = `    async load(src, afterLoad, beforeRender) {
     }
 `
 
+if (!source.includes(upstreamLoad) && !source.includes(haodooLoad)) {
+  const startMarker = '    async load(src, afterLoad, beforeRender) {'
+  const endMarker = '    render(layout) {'
+  const start = source.indexOf(startMarker)
+  const end = source.indexOf(endMarker, start)
+  const actual = start >= 0 && end > start
+    ? source.slice(start, end)
+    : '<View.load method boundaries not found>'
+  throw new Error(
+    `Foliate 1.0.1 View.load source assertion failed. Actual installed method follows:\n---\n${actual}\n---`,
+  )
+}
+
 applyPatch(
   'View SectionDocumentLoader bridge',
   FoliatePatchCategory.HAODOO_WEBVIEW_ADAPTATION,
