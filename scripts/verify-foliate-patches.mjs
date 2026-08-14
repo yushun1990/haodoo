@@ -30,6 +30,8 @@ requireMarker(paginator, '} finally {\n            this.#locked = false', 'navig
 requireMarker(paginator, 'globalThis.__HAODOO_SECTION_DOCUMENT_LOADER__', 'SectionDocumentLoader bridge')
 requireMarker(paginator, 'globalThis.__HAODOO_BLOB_TEXT_REGISTRY__', 'BlobTextRegistry fallback provider')
 requireMarker(paginator, "wrapped.name = kind === 'pagination'", 'transport/render/pagination failure staging')
+requireMarker(paginator, 'this.docBackground = getBackground(doc)', 'Foliate section background capture')
+requireMarker(paginator, "doc.body.style.background = 'none'", 'Foliate section body background reset')
 
 requireMarker(epub, 'getHaodooBlobTextRegistry().register(url, newData)', 'BlobTextRegistry register hook')
 requireMarker(epub, 'getHaodooBlobTextRegistry().delete(url)', 'BlobTextRegistry delete hook')
