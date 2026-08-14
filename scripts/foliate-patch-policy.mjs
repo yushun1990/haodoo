@@ -5,6 +5,7 @@ export const FOLIATE_PATCH_VERSION = '1.0.1'
 
 export const FoliatePatchCategory = Object.freeze({
   UPSTREAM_HARDENING: 'upstream-hardening',
+  GENERIC_RUNTIME_COMPATIBILITY: 'generic-runtime-compatibility',
   HAODOO_WEBVIEW_ADAPTATION: 'haodoo-webview-adaptation',
 })
 
