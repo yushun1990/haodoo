@@ -1,6 +1,6 @@
 # Haodoo 当前推进计划
 
-> **状态快照：2026-08-13**
+> **状态快照：2026-08-14**
 >
 > 这是新会话判断“下一步做什么”的权威入口。长期产品设计见 [`design.md`](design.md)，Reader / WebView 兼容架构细节见 [`reader-compatibility-roadmap.md`](reader-compatibility-roadmap.md)。
 
@@ -22,11 +22,11 @@ P3 writing-mode Spike 已经在 main，但当前任务仍是把 Android WebView 
 
 ```text
 Step 0  恢复绿色基线               ✅
-Phase A Compatibility baseline      ◐ 已有真实设备基线，最终冻结回归待做
 Phase B BrowserCapabilities          ✅
 Phase C SectionDocumentLoader        ✅
 Phase D BlobTextRegistry             ✅
-Phase E Foliate patch 收口           ← 下一项实现任务
+Phase E Foliate patch 收口           ✅
+Phase A Compatibility freeze         ← 当前 gate：最终真机冻结回归
         ↓
 P2.5 Exit Criteria
         ↓
@@ -116,7 +116,29 @@ URL.revokeObjectURL(blobUrl)
 - registry 只镜像 rewritten XHTML / HTML / SVG 文本，不拥有 URL revoke；
 - `SectionDocumentLoader` 仍只依赖 `getHtml()` provider，不直接依赖 registry 实现；
 - registry 不承担 EPUB 持久缓存、离线存储或缓存策略；
-- legacy patch 能迁移本地已经打过旧 Map patch 的 `node_modules`，不要求先手工删除依赖目录。
+- registry patch 支持 fresh install 与幂等重复执行。
+
+### 1.6 Foliate patches 已完成分类与 fail-fast 收口
+
+Phase E 后，patch 执行链明确为：
+
+```text
+patch-foliate-paginator.mjs
+        ↓
+patch-foliate-epub.mjs
+        ↓
+verify-foliate-patches.mjs
+```
+
+维护契约见 [`foliate-patches.md`](foliate-patches.md)。
+
+分类：
+
+1. **upstream hardening**：detached-document guards、section-load error propagation、navigation lock `finally`；
+2. **generic runtime compatibility**：由 `public/legacy-webview.js` 负责，不再把 `Object.groupBy` / `Map.groupBy` helper 写进 Foliate 源码；
+3. **Haodoo WebView adaptation**：`SectionDocumentLoader` bridge 与 `BlobTextRegistry` lifecycle hooks。
+
+patch 固定针对 `foliate-js@1.0.1`；未知版本或未知源码形状直接失败，不允许用宽松 method-boundary replacement 静默移植。Phase E 还校正了 npm 发布包真实 `View.load()` 基线，并保留其 `docBackground` / body background 原始语义。
 
 ---
 
@@ -210,7 +232,7 @@ BlobTextRegistry ← mirrors Foliate blob lifecycle
 - [x] Firefox smoke 绿色；
 - [x] 没有借机继续扩展 P3。
 
-### Phase A — Compatibility Freeze / 回归矩阵 ◐
+### Phase A — Compatibility Freeze / 回归矩阵 ← **当前 gate**
 
 已有自动 / 实际基线，但 P2.5 Exit 前仍需最终真机冻结回归：
 
@@ -273,24 +295,25 @@ BlobTextRegistry ← mirrors Foliate blob lifecycle
 
 另有 `scripts/smoke-blob-registry.mjs` 可用于 focused 浏览器集成验证：真实 EPUB register → Reader close/destroy → registry size 归零 → reopen → 再清理。它不替代最终真机 Phase A。
 
-### Phase E — Foliate patch 收口 ← **立即下一步**
+### Phase E — Foliate patch 收口 ✅
 
-把剩余 patch 分类为：
+- [x] 每个 patch 已写明类别、原因与删除条件，见 `docs/foliate-patches.md`；
+- [x] generic `Object.groupBy` / `Map.groupBy` compatibility 已退出 Foliate source rewriting，归到 early bootstrap；
+- [x] patch scripts 固定 `foliate-js@1.0.1`；
+- [x] source replacement 只接受 exact known upstream / exact known patched source；
+- [x] `View.load` 不再按 method boundaries 宽松覆盖未知源码；
+- [x] 独立 verifier 检查 hardening / adaptation markers，并禁止旧 groupBy helpers / legacy blob Map 回归；
+- [x] focused policy test 覆盖首次 replacement、幂等 rerun、unknown-source rejection；
+- [x] upstream #146 对应 section-load error propagation；
+- [x] upstream #150 对应 detached/bodyless lifecycle hardening；
+- [x] navigation lock `finally` 明确为 generic upstream candidate；
+- [x] 保留 npm `foliate-js@1.0.1` 原有 `docBackground` / body background 语义；
+- [x] 没有升级 Foliate；
+- [x] 没有继续 P3；
+- [x] fresh install + prebuild 二次 patch 幂等验证通过；
+- [x] Chromium / Firefox 真实 EPUB CI 回归继续绿色。
 
-1. upstream hardening；
-2. generic runtime compatibility；
-3. Haodoo WebView adaptation。
-
-要求：
-
-- [ ] 为每个 patch 写明类别、原因与删除条件；
-- [ ] 把能移出 Foliate source rewriting 的 generic polyfill 继续移到 compatibility/bootstrap；
-- [ ] 保留并加强 upstream source assertions，升级 Foliate 时 fail-fast；
-- [ ] 明确哪些 patch 可考虑 upstream PR；
-- [ ] 回归覆盖完整前不升级 Foliate；
-- [ ] 不在 Phase E 顺手继续 P3。
-
-Phase E 完成后不要立即宣布 P2.5 结束，还要回到 Phase A 做最终真机冻结回归并核对 Exit Criteria。
+Phase E 完成后 **不宣布 P2.5 结束**。当前必须回到 Phase A 做最终真机冻结回归并核对 Exit Criteria。
 
 ---
 
@@ -306,7 +329,7 @@ Phase E 完成后不要立即宣布 P2.5 结束，还要回到 Phase A 做最终
 - [x] diagnostics 与 Reader 共用 probes；
 - [x] `SectionDocumentLoader` 边界明确并落地；
 - [x] `BlobTextRegistry` 生命周期明确；
-- [ ] Foliate patches 已分类并可维护；
+- [x] Foliate patches 已分类并可维护；
 - [x] 当前没有新增浏览器品牌 Reader 分支。
 
 ---
@@ -361,11 +384,9 @@ Reader 核心稳定后再做 WordPress 构建期同步、稳定书码、metadata
       ↓
 确认仍处于 P2.5
       ↓
-读 reader-compatibility-roadmap.md
+读 reader-compatibility-roadmap.md + foliate-patches.md
       ↓
-推进最靠前未完成的 P2.5 phase
-      ↓
-Phase E 完成后执行 Phase A 最终真机冻结回归
+执行 Phase A 最终真机冻结回归
       ↓
 P2.5 Exit Criteria 全绿
       ↓
@@ -374,4 +395,4 @@ P2.5 Exit Criteria 全绿
 
 ### 当前新会话推荐任务
 
-> 继续推进 `yushun1990/haodoo`。当前仍是 P2.5 Reader 兼容性收口，P3 暂停扩展。Phase B `BrowserCapabilities`、Phase C `SectionDocumentLoader`、Phase D `BlobTextRegistry` 已完成。下一项是 Phase E：系统分类并收口现有 Foliate patches，写清每个 patch 的类别、原因、删除条件和 upstream 可能性，把能脱离 Foliate source rewriting 的 generic compatibility 继续外移，同时保持 source assertions 和 Chromium / Firefox 回归。Phase E 后还要做 Phase A 最终真机冻结回归，不能直接宣布 P2.5 完成。
+> 继续推进 `yushun1990/haodoo`。当前仍是 P2.5 Reader 兼容性收口，P3 暂停扩展。Phase B `BrowserCapabilities`、Phase C `SectionDocumentLoader`、Phase D `BlobTextRegistry`、Phase E Foliate patch 收口均已完成；Desktop Chromium / Firefox 自动回归绿色。下一项不是继续写 Reader 功能，而是 Phase A 最终真机冻结回归：Chrome Android、Firefox Android、Via、百度 Android WebView（以及有设备时的 iOS Safari），覆盖横式/原始直式 EPUB、多卷册、连续翻页/跨章节/TOC、CFI 恢复、排版变化、横竖屏、一本关闭后开第二本、repeated open/destroy 和 navigation lock。只有 Exit Criteria 全绿后才正式恢复 P3。
